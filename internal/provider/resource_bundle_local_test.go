@@ -34,7 +34,7 @@ func newBundleLocalMockServer(t *testing.T) *httptest.Server {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /sspi/bundles/local", func(w http.ResponseWriter, r *http.Request) {
-		if err := r.ParseMultipartForm(32 << 20); err != nil {
+		if err := r.ParseMultipartForm(32 << 20); err != nil { //nolint:gosec // local httptest mock server, not internet-facing
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}

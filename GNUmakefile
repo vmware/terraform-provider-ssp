@@ -9,7 +9,7 @@ DIST_DIR:=dist
 default: build
 
 tools:
-	GO111MODULE=on go install -mod=mod github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+	GO111MODULE=on go install -mod=mod github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
 	GO111MODULE=on go install -mod=mod github.com/katbyte/terrafmt
 
 build: fmtcheck

@@ -82,13 +82,13 @@ func testAccCheckSensorRegistrationTokenDestroy(s *terraform.State) error {
 		}
 
 		url := strings.TrimRight(host, "/") + "/sensors/registration-tokens/" + rs.Primary.ID
-		req, err := http.NewRequest(http.MethodGet, url, nil)
+		req, err := http.NewRequest(http.MethodGet, url, nil) //nolint:gosec // host is the operator-configured SSP_HOST acceptance-test target, not user input
 		if err != nil {
 			return err
 		}
 		req.SetBasicAuth(username, password)
 
-		resp, err := httpClient.Do(req)
+		resp, err := httpClient.Do(req) //nolint:gosec // same operator-configured target as above
 		if err != nil {
 			return err
 		}
