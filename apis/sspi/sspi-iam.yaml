@@ -1,0 +1,1238 @@
+openapi: 3.0.3
+info:
+  title: SSPI IAM API
+  version: 1.0.0
+tags:
+  - name: iam
+    description: Security Services Platform Installer Authentication API
+
+paths:
+  /sspi/iam/login:
+    post:
+      tags:
+        - iam
+      summary: Login API
+      description: |
+        The API to login to SSP Installer.  If successful, the HTTP response headers will contain a Set-Cookie header and an X-XSRF-TOKEN header. Use the value of Set-Cookie header in 'Cookie:' header and the value of X-XSRF-TOKEN header in 'X-XSRF-TOKEN:' header of subsequent API requests.
+      operationId: Login
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Successful Login Operation.
+          headers:
+            Set-Cookie:
+              description: Set-Cookie header for the session cookie
+              schema:
+                type: string
+            X-XSRF-Token:
+              description: XSRF token for subsequent API requests
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginAuthResponse'
+        '302':
+          description: User password expired - redirect to change password
+          headers:
+            Location:
+              description: URL to redirect to change password
+              schema:
+                type: string
+                format: uri
+        '401':
+          description: Authentication failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: 4XX and 5XX type errors with appropriate message
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /sspi/iam/logout:
+    post:
+      tags:
+        - iam
+      summary: Logout API
+      description: |
+        The API to logout of SSP Installer.
+      operationId: Logout
+      responses:
+        '302':
+          description: Successful logout - redirect to login page
+          headers:
+            Location:
+              description: URL to redirect to after logout
+              schema:
+                type: string
+                format: uri
+        '401':
+          description: Authentication failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: 4XX and 5XX type errors with appropriate message
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: []
+        - auditor: []
+        - support_bundle_collector: []
+
+  /sspi/iam/change-password:
+    post:
+      tags:
+        - iam
+      summary: Change password
+      description: |
+        Change local user passwords. Users can only change their own password. The old password is required to change the password.
+      operationId: ChangePassword
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordRequest'
+      responses:
+        '204':
+          description: User password changed successfully
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: 4XX and 5XX type errors with appropriate message
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: []
+        - auditor: []
+        - support_bundle_collector: []
+
+  /sspi/iam/reset-password:
+    post:
+      tags:
+        - iam
+      summary: Reset password
+      description: |
+        Reset password by administrator for a local user. Remote users are not allowed to reset local user passwords.
+      operationId: ResetPassword
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResetPasswordRequest'
+      responses:
+        '204':
+          description: User password reset successfully
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: 4XX and 5XX type errors with appropriate message
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: []
+
+  /sspi/iam/current-user-info:
+    get:
+      tags:
+        - iam
+      summary: Current user information.
+      description: |
+        Returns the information of the logged in user.
+      operationId: GetCurrentUserInfo
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserInfo'
+          description: Obtained the current user information successfully.
+        default:
+          description: 4XX and 5XX type errors with appropriate message
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: []
+        - auditor: []
+        - support_bundle_collector: []
+
+  /sspi/iam/users:
+    get:
+      tags:
+        - iam
+      summary: User and group information.
+      description: |
+        Returns the information of the users and groups.
+      operationId: GetAllUsersInfo
+      parameters:
+        - name: name
+          in: query
+          description: Filter by name
+          schema:
+            type: string
+        - name: role
+          in: query
+          description: Filter by one or more roles
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/SspInstallerRole'
+        - name: user_type
+          in: query
+          description: Filter by one or more user types
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/UserType'
+        - $ref: '#/components/parameters/Offset'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/SortAscending'
+        - $ref: '#/components/parameters/SortBy'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserInfoList'
+          description: Obtained the users and groups information successfully.
+        default:
+          description: 4XX and 5XX type errors with appropriate message
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: []
+        - auditor: []
+
+  /sspi/iam/roles:
+    get:
+      tags:
+        - iam
+      summary: Get information about all roles.
+      description: |
+        Returns information about all the roles.
+      operationId: GetAllRolesInfo
+      parameters:
+        - $ref: '#/components/parameters/Offset'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/SortAscending'
+        - $ref: '#/components/parameters/SortBy'
+      responses:
+        '200':
+          description: Obtained roles information successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleList'
+        default:
+          description: 4XX and 5XX type errors with appropriate message
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: []
+        - auditor: []
+
+  /sspi/iam/role-bindings:
+    get:
+      tags:
+        - iam
+      summary: Get all users and groups with their roles.
+      description: |
+        Returns information about all the users with roles.
+      operationId: GetAllRoleBindings
+      parameters:
+        - name: user_name
+          in: query
+          description: Filter by user name
+          schema:
+            type: string
+        - name: role
+          in: query
+          description: Filter by one or more roles
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/SspInstallerRole'
+        - name: user_type
+          in: query
+          description: Filter by one or more user types
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/UserType'
+        - $ref: '#/components/parameters/Offset'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/SortAscending'
+        - $ref: '#/components/parameters/SortBy'
+      responses:
+        '200':
+          description: Obtained user and roles information successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleBindingList'
+        '204':
+          description: No content, ldap not configured
+        default:
+          description: 4XX and 5XX type errors with appropriate message
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: []
+        - auditor: []
+
+    post:
+      tags:
+        - iam
+      summary: Assign roles to a user or group.
+      description: |
+        Assigns roles to a user or group.
+      operationId: BindRolesToEntity
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RoleBinding"
+      responses:
+        '200':
+          description: Obtained user/group's role information successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleBinding'
+        default:
+          description: 4XX and 5XX type errors with appropriate message
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: []
+
+  /sspi/iam/role-bindings/{binding-id}:
+    get:
+      tags:
+        - iam
+      summary: Get role information of user or group.
+      description: |
+        Returns information about the role binding for a given user or group.
+      operationId: GetRoleBinding
+      parameters:
+        - in: path
+          name: binding-id
+          description: User or Group's role binding ID.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Obtained user/group's role information successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleBinding'
+        default:
+          description: 4XX and 5XX type errors with appropriate message
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: []
+        - auditor: []
+
+    put:
+      tags:
+        - iam
+      summary: Update roles assigned to a user or group.
+      description: |
+        User or Group to assign roles to.
+      operationId: UpdateRolesToEntity
+      parameters:
+        - in: path
+          name: binding-id
+          description: User or Group's role binding ID.
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RoleBinding"
+      responses:
+        '200':
+          description: Updated user/group's role information successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleBinding'
+        '409':
+          description: Revision conflict - the resource was modified by another request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: 4XX and 5XX type errors with appropriate message
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: []
+
+    delete:
+      tags:
+        - iam
+      summary: Delete all roles assigned to a user or group.
+      description: |
+        Deletes all roles assigned to a user or group.
+      operationId: DeleteRolesToEntity
+      parameters:
+        - in: path
+          name: binding-id
+          description: User or Group's role binding ID.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Deleted user/group's role information successfully.
+        default:
+          description: 4XX and 5XX type errors with appropriate message
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: []
+
+  /sspi/iam/ldap-identity-sources:
+    get:
+      tags:
+        - iam
+      summary: Get LDAP identity sources
+      description: |
+        Get all the LDAP identity sources.
+      operationId: GetAllLdapIdentitySources
+      parameters:
+        - $ref: '#/components/parameters/Offset'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/SortAscending'
+        - $ref: '#/components/parameters/SortBy'
+      responses:
+        '200':
+          description: Get all the LDAP identity sources
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LdapIdentitySourceList'
+        default:
+          description: 4XX and 5XX type errors with appropriate message
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: []
+        - auditor: []
+
+    post:
+      tags:
+        - iam
+      summary: Create an LDAP identity source
+      description: |
+        Create a new LDAP identity source after validating the
+        connectivity of the LDAP identity source. The errors property
+        will contain the errors of the connection status to provided
+        identity source if it failed.
+      operationId: CreateLdapIdentitySource
+      requestBody:
+        description: LDAP identity source to be created
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LdapIdentitySource"
+      responses:
+        '200':
+          description: Successfully created an LDAP identity source
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LdapIdentitySource'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: 4XX and 5XX type errors with appropriate message
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: []
+
+  /sspi/iam/ldap-identity-sources/{identity-source-id}:
+    get:
+      tags:
+        - iam
+      summary: Get LDAP identity source
+      description: |
+        Get the LDAP identity source.
+      operationId: GetLdapIdentitySource
+      parameters:
+        - in: path
+          name: identity-source-id
+          description: Identity source ID.
+          schema:
+            type: string
+        - in: query
+          name: check_connection_status
+          description: |
+            Checks the connectivity of the fetched LDAP identity source
+            and returns connectivity status result along with configuration if
+            set to true. Default is false.
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Get LDAP identity source.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LdapIdentitySource'
+        default:
+          description: 4XX and 5XX type errors with appropriate message
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: []
+        - auditor: []
+
+    put:
+      tags:
+        - iam
+      summary: Update an LDAP identity source
+      description: |
+        Update the configuration of an existing LDAP identity source after
+        validating the connectivity of the LDAP identity source. The errors property
+        will contain the errors of the connection status to provided identity
+        source if it failed.
+      operationId: UpdateLdapIdentitySource
+      parameters:
+        - in: path
+          name: identity-source-id
+          description: Identity source ID.
+          schema:
+            type: string
+      requestBody:
+        description: LDAP identity source to be updated
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LdapIdentitySource"
+      responses:
+        '200':
+          description: Successfully updated an LDAP identity source
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LdapIdentitySource'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: 4XX and 5XX type errors with appropriate message
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: []
+
+    delete:
+      tags:
+        - iam
+      summary: Delete an LDAP identity source
+      description: |
+        Delete an LDAP identity source. Users defined in that
+        source will no longer be able to access SSP Installer.
+      operationId: DeleteLdapIdentitySource
+      parameters:
+        - in: path
+          name: identity-source-id
+          description: Identity source ID.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Deletion successful
+        default:
+          description: 4XX and 5XX type errors with appropriate message
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: []
+
+  /sspi/iam/ldap-identity-sources/search:
+    get:
+      tags:
+        - iam
+      summary: Search for groups and users in the configured LDAP identity source
+      description: |
+        Search the LDAP identity source for users and groups that match the given search_param. In most cases, the LDAP source performs a case-insensitive search.
+      operationId: SearchLdapIdentitySource
+      parameters:
+        - in: query
+          name: identity_source_id
+          description: Identity source ID.
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: search_param
+          description: |
+            Input to LDAP search request. The input is matched
+            against using a wildcard '*' suffix. At least 3 characters are required to perform a search.
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Offset'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/SortAscending'
+        - $ref: '#/components/parameters/SortBy'
+      responses:
+        '200':
+          description: Search Results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LdapIdentitySearchResults'
+        default:
+          description: 4XX and 5XX type errors with appropriate message
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: []
+
+components:
+  parameters:
+    Offset:
+      name: offset
+      in: query
+      description: Number of items to skip before starting to collect the result set.
+      schema:
+        type: integer
+        default: 0
+    PageSize:
+      name: pageSize
+      in: query
+      description: The numbers of items to return.
+      schema:
+        type: integer
+        default: 10
+    SortAscending:
+      name: sortAscending
+      in: query
+      description: Sort the items by Ascending (true) or Descending (false).
+      schema:
+        type: boolean
+        default: true
+    SortBy:
+      name: sortBy
+      in: query
+      description: Sort the items by a specific field.
+      schema:
+        type: string
+        default: "id"
+
+  schemas:
+    ListResult:
+      title: List Result
+      description: Base pagination fields.
+      type: object
+      properties:
+        cursor:
+          type: string
+        result_count:
+          type: integer
+
+    ManagedResource:
+      title: Managed Resource
+      description: Common fields for managed resources.
+      type: object
+      properties:
+        id:
+          type: string
+          description: Unique identifier for the resource.
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          description: Resource creation time.
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          description: Resource last update time.
+          readOnly: true
+
+    LoginRequest:
+      title: Login request
+      description: The details needed for a user to login to SSP Installer.
+      type: object
+      required:
+        - user_name
+        - password
+        - user_type
+      properties:
+        user_name:
+          type: string
+          title: user_name
+          description: The user name of the user to login.
+        password:
+          type: string
+          title: password
+          description: The password of the user to login.
+        user_type:
+          type: string
+          title: user type
+          description: The type of user
+          $ref: '#/components/schemas/UserType'
+
+    LoginAuthResponse:
+      title: Login Auth Response
+      description: The response after successful login to SSP Installer.
+      type: object
+      properties:
+        user_name:
+          type: string
+          title: user name
+          description: Name of the logged in user.
+        display_name:
+          type: string
+          title: Display Name
+          description: Display name of user
+        user_type:
+          type: string
+          title: User Type
+          description: The type of user
+          $ref: '#/components/schemas/UserType'
+        roles:
+          type: array
+          title: Roles
+          description: The Roles that are associated with the user.
+          items:
+            $ref: '#/components/schemas/Role'
+
+    ChangePasswordRequest:
+      title: ChangePasswordRequest
+      description: The details needed to change users password.
+      type: object
+      properties:
+        old_password:
+          type: string
+          title: old password
+          description: The old password of the user.
+        new_password:
+          type: string
+          title: new password
+          description: The new password for the user.
+
+    ResetPasswordRequest:
+      title: ResetPasswordRequest
+      description: The details needed to reset a local user's password by administrator.
+      type: object
+      required:
+        - user_name
+        - new_password
+      properties:
+        user_name:
+          type: string
+          title: User name
+          description: The user name of the user.
+        new_password:
+          type: string
+          title: New password
+          description: The new password for the user.
+
+    SspInstallerRole:
+      title: SSP Installer Role
+      description: The roles available in SSP Installer.
+      type: string
+      enum:
+        - enterprise_admin
+        - auditor
+        - security_engineer
+        - security_op
+
+    Role:
+      title: Role
+      description: Role information
+      type: object
+      required:
+        - role
+      properties:
+        role:
+          $ref: '#/components/schemas/SspInstallerRole'
+        display_name:
+          type: string
+          title: Role Display Name
+          description: The display name of the role.
+
+    RoleList:
+      title: Role List
+      description: List all roles information
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ListResult'
+        - type: object
+          properties:
+            results:
+              type: array
+              title: results
+              description: List of Roles.
+              items:
+                $ref: '#/components/schemas/Role'
+
+    UserType:
+      title: User Type
+      description: The type of user
+      type: string
+      enum:
+        - LOCAL_USER
+        - REMOTE_USER
+        - REMOTE_GROUP
+
+    PasswordStatus:
+      title: Password Status
+      description: |
+        The password expiry status for user.
+        ACTIVE: The password is active.
+        EXPIRED: The password has expired.
+        INVALID: The password of the user is not managed by SSP Installer. Like in case of remote users.
+      type: string
+      enum:
+        - ACTIVE
+        - EXPIRED
+        - INVALID
+
+    UserInfo:
+      title: User Info
+      description: Authenticated User Info
+      type: object
+      properties:
+        name:
+          type: string
+          title: Name
+          description: Name of the user/group
+        display_name:
+          type: string
+          title: Display Name
+          description: Display name
+        user_type:
+          type: string
+          title: User Type
+          description: The type of user
+          $ref: '#/components/schemas/UserType'
+        password_status:
+          type: string
+          title: Password Status
+          description: Indicates the password related status for user
+          $ref: '#/components/schemas/PasswordStatus'
+        password_expiration_timestamp:
+          title: Password Expiration Timestamp
+          description: The time (in POSIX seconds) at which password will expire
+          $ref: '#/components/schemas/EpochMsTimestamp'
+        roles:
+          type: array
+          title: Roles
+          description: The roles assigned to the user
+          items:
+            $ref: '#/components/schemas/Role'
+
+    UserInfoList:
+      title: User Info List
+      description: List of user information
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ListResult'
+        - type: object
+          properties:
+            results:
+              type: array
+              title: Results
+              description: List of user information.
+              items:
+                $ref: '#/components/schemas/UserInfo'
+
+    RoleBinding:
+      title: Role Binding
+      description: User/Group's role binding
+      allOf:
+        - $ref: '#/components/schemas/ManagedResource'
+        - type: object
+          required:
+            - entity_name
+            - roles
+          properties:
+            entity_name:
+              type: string
+              title: Entity Name
+              description: |
+                The name of the entity being registered. The name is matched based on the configured Identity Source and underlying implementation. In the case of LDAP, this should be the principal name.
+            user_type:
+              title: User Type
+              $ref: '#/components/schemas/UserType'
+            roles:
+              type: array
+              title: Roles
+              description: The Roles that are associated with the user.
+              items:
+                $ref: '#/components/schemas/Role'
+
+    RoleBindingList:
+      title: Role Binding List
+      description: List of all users with roles.
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ListResult'
+        - type: object
+          properties:
+            results:
+              type: array
+              title: Results
+              description: List of users with role information.
+              items:
+                $ref: '#/components/schemas/RoleBinding'
+
+    LdapType:
+      title: LDAP Type
+      description: The type of LDAP server
+      type: string
+      enum:
+        - ACTIVE_DIRECTORY
+        - OPEN_LDAP
+
+    LdapIdentitySource:
+      title: LDAP Identity Source
+      description: This is the base type for all identity sources that use LDAP for authentication and group membership.
+      allOf:
+        - $ref: '#/components/schemas/ManagedResource'
+        - type: object
+          required:
+            - domain_name
+            - base_distinguished_name
+            - ldap_server
+            - ldap_type
+          properties:
+            domain_name:
+              type: string
+              title: Authentication domain name
+              description: The authentication domain name.
+            alternative_domain_names:
+              type: array
+              title: Alternative Domain Names
+              description: Additional domains to be directed to this identity source.
+              items:
+                type: string
+            ldap_type:
+              $ref: '#/components/schemas/LdapType'
+            base_distinguished_name:
+              type: string
+              title: Base DN
+              description: DN of subtree for user and group searches
+            ldap_server:
+              $ref: '#/components/schemas/LdapIdentitySourceServer'
+            connectivity_result:
+              $ref: '#/components/schemas/LdapIdentitySourceConnectivityResult'
+
+    LdapIdentitySourceList:
+      title: List LDAP Identity Source
+      description: List of LDAP identity sources
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ListResult'
+        - type: object
+          properties:
+            results:
+              type: array
+              title: Results
+              description: List of LDAP identity sources.
+              items:
+                $ref: '#/components/schemas/LdapIdentitySource'
+
+    EpochMsTimestamp:
+      type: integer
+      format: int64
+      description: Milliseconds since Unix epoch.
+
+    LdapIdentitySearchItem:
+      title: Ldap Identity Search Item
+      description: LDAP search result item
+      type: object
+      required:
+        - common_name
+        - distinguished_name
+        - user_type
+      properties:
+        common_name:
+          type: string
+          title: Common Name
+          description: The Common Name (CN) of the entry, if available
+        distinguished_name:
+          type: string
+          title: Distinguished Name
+          description: The Distinguished Name (DN) of the entry.
+        principal_name:
+          type: string
+          title: Principal Name
+          description: |
+            The Principal Name of the user or group, if available.
+        user_type:
+          $ref: '#/components/schemas/UserType'
+
+    LdapIdentitySearchResults:
+      title: Ldap Identity Search Results
+      description: Search results
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ListResult'
+        - type: object
+          properties:
+            results:
+              type: array
+              title: Results
+              description: List of LDAP identity search items.
+              items:
+                $ref: '#/components/schemas/LdapIdentitySearchItem'
+
+    Error:
+      title: Error
+      description: API error response format.
+      type: object
+      properties:
+        error_code:
+          type: integer
+        error_message:
+          type: string
+        details:
+          type: array
+          items:
+            type: string
+
+    LdapProbeError:
+      title: Error detail from probe
+      description: Detail about one error encountered during a probe.
+      type: object
+      required:
+        - error_type
+        - message
+      properties:
+        error_type:
+          $ref: '#/components/schemas/LdapProbeErrorType'
+        message:
+          type: string
+          title: Message
+          description: Detailed error message for the corresponding error type
+
+    LdapProbeErrorType:
+      type: string
+      title: Ldap Probe Error Type
+      description: |
+        BASE_DN_NOT_FOUND: The configured base DN does not exist on the
+            LDAP server or is not readable.
+        BIND_DN_AND_PASSWORD_REQUIRED: This server is configured to
+            require a bind DN and password. Please add these to your
+            LDAP server configuration.
+        BIND_DN_INVALID: The bind DN or username provided is not valid
+            on the LDAP server. Check that the bind DN is correct.
+            This error may also indicate that the base DN in your
+            configuration is incorrect.
+        CERTIFICATE_HOSTNAME_MISMATCH_ERROR: The hostname configured for
+            the LDAP server does not match the hostname in the server's
+            certificate subject or alternative subject names. Be sure
+            that the hostname you configure in SSP Installer matches one
+            of those names.
+        CERTIFICATE_MISMATCH_ERROR: The certificate presented by the
+            LDAP server did not match the certificate in the configuration
+            on the SSP Installer.
+        CONNECTION_REFUSED: The connection was refused when contacting the
+            LDAP server. Ensure that the LDAP server is running and that
+            you are using the correct ip/hostname.
+        CONNECTION_TIMEOUT: The connection timed out when contacting
+            the LDAP server. Check the hostname/ip and any firewalls
+            between the SSP Installer and the LDAP server.
+        GENERAL_ERROR: An undetermined error occurred.
+        INVALID_CONFIGURED_CERTIFICATE: The certificate configured for
+            this LDAP server is invalid and could not be decoded. Check
+            that the PEM-formatted certificate you provided is correct.
+        INVALID_CREDENTIALS: The username and/or password are incorrect.
+        SSL_HANDSHAKE_ERROR: An error occurred while establishing a secure
+            connection with the LDAP server. Check that the LDAP server's
+            certificate is correct, and that it is using an SSL/TLS
+            cipher suite that is compatible with the SSP Installer.
+            This error can also occur if the hostname you have configured
+            for the LDAP server does not match any of the hostnames in
+            the Subject Alternative Name records in the server
+            certificate.
+        STARTTLS_FAILED: Unable to use StartTLS to upgrade the connection
+            to use TLS. Ensure that the LDAP server supports TLS and if
+            not, use LDAP or LDAPS as the protocol.
+        UNKNOWN_HOST: The hostname of the LDAP server could not be
+            resolved.
+        NO_ROUTE_TO_HOST: There is no network route to the host.
+        BIND_EXCEPTION: A socket to the remote host could not be opened.
+        PORT_UNREACHABLE: The LDAP port is not open on the remote host.
+        BASE_DN_NOT_WITHIN_DOMAIN: For Active Directory, the base DN
+            is not a subtree of the Domain Component tree corresponding
+            to the LDAP domain. For example, if the domain is
+            "example.com", the baseDN should be "dc=example, dc=com"
+            or a subtree like "ou=Users,dc=example,dc=com".
+        LDAP_SERVER_DISABLED: The LDAP server is marked as disabled
+            in the SSP Installer configuration and will not be used.
+      enum:
+        - BASE_DN_NOT_FOUND
+        - BIND_DN_AND_PASSWORD_REQUIRED
+        - BIND_DN_INVALID
+        - CERTIFICATE_HOSTNAME_MISMATCH_ERROR
+        - CERTIFICATE_MISMATCH_ERROR
+        - CONNECTION_REFUSED
+        - CONNECTION_TIMEOUT
+        - GENERAL_ERROR
+        - INVALID_CONFIGURED_CERTIFICATE
+        - INVALID_CREDENTIALS
+        - SSL_HANDSHAKE_ERROR
+        - STARTTLS_FAILED
+        - UNKNOWN_HOST
+        - NO_ROUTE_TO_HOST
+        - BIND_EXCEPTION
+        - PORT_UNREACHABLE
+        - BASE_DN_NOT_WITHIN_DOMAIN
+        - LDAP_SERVER_DISABLED
+
+    LdapIdentitySourceServer:
+      title: Ldap Identity Source Server
+      description: Information about a single LDAP server.
+      type: object
+      required:
+        - url
+      properties:
+        url:
+          type: string
+          title: URL
+          description: The URL for the LDAP server
+        certificates:
+          type: array
+          title: TLS certificate(s) for LDAP server(s)
+          description: |
+            Certificate for the LDAP server
+          items:
+            type: string
+        bind_identity:
+          type: string
+          title: Username or DN for LDAP authentication
+          description: |
+            A username used to authenticate to the directory
+            when administering roles in SSP Installer. This user should
+            have privileges to search the LDAP directory
+            for groups and users. This user is also used in
+            some cases (OpenLDAP) to look up an SSP Installer user's
+            distinguished name based on their SSP Installer login name.
+            If omitted, SSP Installer will authenticate to the LDAP
+            server using an LDAP anonymous bind operation.
+            For Active Directory, provide a userPrincipalName
+            (e.g. administrator@airius.com) or the full
+            distinguished name. For OpenLDAP, provide the
+            distinguished name of the user (e.g. uid=admin,
+            cn=airius, dc=com).
+        password:
+          type: string
+          title: LDAP Server Password
+          description: A password used when authenticating to the directory.
+          writeOnly: true
+        enabled:
+          type: boolean
+          default: false
+          title: If true, this LDAP server is enabled
+          description: |
+            Controls whether LDAP should be used to authenticate users.
+
+    LdapIdentitySourceConnectivityResult:
+      title: Ldap Identity Source Connectivity Result
+      description: The results of probing the connectivity of an ldap identity source.
+      type: object
+      required:
+        - result
+      properties:
+        result:
+          type: string
+          title: Overall result
+          description: |
+            Overall result of the ldap server connectivity probe.
+            If the probe was able to connect to the LDAP service, authenticate using
+            the provided credentials, and perform searches of the configured user
+            and group search bases without error, the result is SUCCESS. Otherwise, the
+            result is FAILURE, and additional details may be found in the errors property.
+          enum:
+            - SUCCESS
+            - FAILURE
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/LdapProbeError'
+          title: Error details
+          description: Detail about errors encountered during the ldap server connectivity probe.

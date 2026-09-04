@@ -1,0 +1,3085 @@
+openapi: 3.0.3
+info:
+  title: SSPI API
+  version: 1.0.0
+# Public API of secop service
+
+tags:
+  - name: instance-management
+    description: APIs for lifecycle management of Security Service Platform Installer and Platform.
+  - name: provider-management
+    description: APIs for lifecycle management of vSphere providers.
+  - name: diagnostic
+    description: APIs for diagnostic operations of Security Service Platform Installer and Platform.
+  - name: backup-restore
+    description: APIs for Security Service Platform Installer Backup/Restore operations.
+
+paths:
+  /sspi/settings:
+    get:
+      tags:
+        - instance-management
+      summary: Retrieves the global settings for SSP Installer
+      description: |
+        Fetches the global configuration settings based on form factor or SSP type.
+        Either form_factor or ssp_type must be provided.
+
+        For MEDIUM form factor:
+          - min_worker_count: 2
+          - max_worker_count: 2
+          - Note: Medium supports exactly 2 workers. Use Large form factor for 4+ workers
+
+        For LARGE form factor:
+          - min_worker_count: 4
+          - max_worker_count: 10
+
+        For EXTRA_LARGE form factor:
+          - min_worker_count: 8
+          - max_worker_count: 14
+          - Note: For high-scale deployments with all features
+
+        For ssp_type parameter (used for non-ATP deployments):
+          - ssp_type=LICENSING: Licensing deployment (1 worker, 1 controller)
+          - ssp_type=AVI_OPERATIONS: AVI Operations deployment (2 workers, 1 controller)
+          - ssp_type=ATP: Advanced Threat Protection (requires form_factor parameter)
+
+        IP Pool Count Calculation:
+        The API returns minimum IP pool counts (min_node_ip_pool_count and
+        min_service_ip_pool_count) based on the form factor and worker count.
+
+        For variable worker count form factors (Medium, Large, Extra-Large):
+          - worker_count parameter can override the default (must be within valid range)
+          - If not provided, min_worker_nodes from the form factor spec is used
+
+        For fixed worker count deployments (LICENSING, AVI_OPERATIONS, Evaluation):
+          - worker_count parameter is ignored
+          - Always uses min_worker_nodes from the deployment spec
+
+        Node IP Pool (all deployments): 2 + controller_count + worker_count
+          (1 for VIP + 1 for rolling upgrade + all node IPs)
+
+        Service IP Pool (varies by deployment type):
+          - Licensing/AVI Operations/Evaluation: 3 IPs
+            (1 Contour + 1 kafka-external + 1 kafka broker, no scaleout)
+          - Medium: 5 IPs (1 Contour + 1 kafka-external + 3 kafka brokers hardcoded)
+          - Large/Extra-Large: 3 + ceil(worker_count/2)
+            (1 Contour + 1 kafka-external + 1 kafka broker + extra brokers for Kafka cluster)
+      operationId: GetDeploymentSettings
+      parameters:
+        - in: query
+          name: form_factor
+          description: |
+            The form factor for which global settings are being requested.
+            Either form_factor or ssp_type must be provided.
+            Valid values: MEDIUM, LARGE, EXTRA_LARGE
+          required: false
+          example: LARGE
+          schema:
+            $ref: '#/components/schemas/FormFactor'
+        - in: query
+          name: worker_count
+          description: |
+            The number of worker nodes to use for IP pool calculation.
+            Only applicable for variable worker count form factors (Medium, Large, Extra-Large).
+            Must be within the valid range [min_worker_nodes, max_worker_nodes] for the form factor.
+            If not provided, min_worker_nodes from the form factor spec is used.
+            Ignored for fixed worker count deployments (LICENSING, AVI_OPERATIONS).
+          required: false
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+          example: 4
+        - in: query
+          name: ssp_type
+          description: |
+            The SSP deployment type. Use this for non-ATP deployments where form_factor is not applicable.
+            Either form_factor or ssp_type must be provided.
+            - LICENSING: Licensing-only deployment (1 worker, 1 controller)
+            - AVI_OPERATIONS: AVI Operations deployment (2 workers, 1 controller)
+            - ATP: Advanced Threat Protection (requires form_factor parameter instead)
+          required: false
+          schema:
+            $ref: '#/components/schemas/SspType'
+          example: LICENSING
+      responses:
+        200:
+          description: Secop global settings retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GlobalSettings'
+        400:
+          description: |
+            Bad request. Either form_factor or ssp_type must be provided.
+            If ssp_type=ATP is provided, form_factor is required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: |
+            An error occurred while fetching settings.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: []
+        - auditor: []
+
+  /sspi/platforms:
+    get:
+      tags:
+        - instance-management
+      summary: List all defined platforms
+      description: |
+        Retrieves a paginated list of all platform deployments and their high-level summaries (IDs, status, basic info).
+
+        **Notes:**
+        * If no platforms exist, returns an empty list with a 200 status code.
+        * To get the detailed full configuration of a specific platform returned in this list, use `GET /sspi/platforms/{platform-id}`.
+      operationId: GetAllPlatforms
+      parameters:
+        - $ref: '#/components/parameters/Offset'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/SortAscending'
+        - $ref: '#/components/parameters/SortBy'
+      responses:
+        200:
+          description: An array of platform summaries.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlatformConfigList'
+        default:
+          description: |
+            An error occurred fetching platforms.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: []
+        - auditor: []
+        - support_bundle_collector: []
+    post:
+      tags:
+        - instance-management
+      summary: Deploy a new platform instance or run pre-check
+      description: |
+        Creates or initiates deployment of a Security Service Platform (SSP) instance.
+      operationId: CreatePlatform
+      requestBody:
+        required: true
+        description: The full configuration specification for the platform deployment.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlatformFullConfig'
+      responses:
+        202:
+          description: The platform creation request has been accepted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AsyncApiResponse'
+        200:
+          description: Successful response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AsyncApiResponse'
+        default:
+          description: An error occurred while processing the request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: []
+
+  /sspi/platforms/{platform-id}:
+    get:
+      tags:
+        - instance-management
+      summary: Get full platform configuration by ID
+      description: |
+        Retrieves the complete, detailed configuration specification for a specific platform deployment.
+        This includes compute, network, service, and system configurations.
+      operationId: GetPlatformConfig
+      parameters:
+        - in: path
+          name: platform-id
+          description: A globally unique UUID representing the platform. This is the ID returned when initially calling `POST /sspi/platforms`.
+          required: true
+          example: 434348d8-681e-4809-8dc1-427127d2bee7
+          schema:
+            type: string
+      responses:
+        200:
+          description: The platform configuration.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlatformFullConfig'
+        default:
+          description: |
+            An error occurred while checking the SSPI service.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: []
+        - auditor: []
+    put:
+      tags:
+        - instance-management
+      summary: Update a platform instance configuration
+      description: |
+        Updates the platform configuration or changes its desired state.
+      operationId: UpdatePlatform
+      parameters:
+        - in: path
+          name: platform-id
+          description: A globally unique UUID representing the platform.
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        description: The updated platform full configuration.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlatformFullConfig'
+      responses:
+        202:
+          description: The platform update request has been accepted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AsyncApiResponse'
+        200:
+          description: Successful response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AsyncApiResponse'
+        default:
+          description: An error occurred while processing the request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: []
+    delete:
+      tags:
+        - instance-management
+      summary: Delete and teardown a platform deployment
+      description: |
+        Triggers the asynchronous undeployment and teardown of the specified platform cluster.
+
+        **Behavior and Side Effects:**
+        * Executing this endpoint will immediately begin destroying the underlying Kubernetes cluster, VMs, and associated resources.
+        * The workflow is asynchronous. The `status` endpoint will reflect the teardown progress.
+        * Upon successful completion of the undeployment workflow, the platform record is deleted and subsequent calls to the `status` endpoint will return a `404 Not Found`.
+
+        **Actions:**
+        * Passing `action=force_delete` will bypass graceful teardown steps and forcibly delete the SSP deployment and database records, ignoring standard cleanup failures.
+      operationId: DeletePlatform
+      parameters:
+        - in: path
+          name: platform-id
+          description: A globally unique UUID representing the platform to delete.
+          example: 434348d8-681e-4809-8dc1-427127d2bee7
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: action
+          required: false
+          example: force_delete
+          description: Specify an action override (e.g., `force_delete` to bypass graceful termination errors).
+          schema:
+            type: string
+            enum:
+              - force_delete
+      responses:
+        202:
+          description: |
+            The platform action request has been accepted.
+            Use the returned platform ID and status URL to query for more detailed information.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AsyncApiResponse'
+        default:
+          description: |
+            An error occurred while checking the SSPI service.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: []
+
+  /sspi/platforms/{platform-id}/status:
+    get:
+      tags:
+        - instance-management
+      summary: Poll LCM workflow status and precheck results
+      description: |
+        Retrieves the real-time execution status of any active precheck or Lifecycle Management (LCM) workflows for the platform.
+
+        **Workflow Chain:**
+        This endpoint is the standard polling mechanism used after triggering asynchronous operations like `POST /sspi/platforms`, `PUT /sspi/platforms/{platform-id}`, or `DELETE /sspi/platforms/{platform-id}`.
+
+        **Returns:**
+        * Overall status of the active job (`IN_PROGRESS`, `COMPLETED`, `FAILED`, etc.).
+        * Detailed step-by-step precheck results and their individual pass/fail states.
+      operationId: GetPlatformLcmStatus
+      parameters:
+        - in: path
+          name: platform-id
+          description: A globally unique UUID representing the platform.
+          example: 434348d8-681e-4809-8dc1-427127d2bee7
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowStatus'
+        default:
+          description: |
+            An error occurred while checking the SSPI service.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: []
+        - auditor: []
+
+  /sspi/platforms/{platform-id}/health:
+    get:
+      tags:
+        - diagnostic
+      summary: Retrieve high-level installer health status for the platform
+      description: |
+        Returns the overall high-level health state of the platform deployment as perceived by the installer.
+
+        **Notes:**
+        * This is an installer-centric view of health. For detailed, granular cluster health metrics, use the `ssp/cluster/monitor/platform/status` API from the corresponding SSP platform instead.
+      operationId: GetPlatformHealthStatus
+      parameters:
+        - in: path
+          name: platform-id
+          description: A globally unique UUID representing the platform.
+          required: true
+          example: 434348d8-681e-4809-8dc1-427127d2bee7
+          schema:
+            type: string
+      responses:
+        200:
+          description: Platform health status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlatformHealthStatus"
+      security:
+        - enterprise_admin: []
+        - auditor: []
+
+  /sspi/info:
+    get:
+      tags:
+        - diagnostic
+      summary: Retrieve Installer Appliance metadata and version
+      description: |
+        Returns diagnostic information about the Security Service Platform Installer appliance itself.
+
+        **Returns:**
+        * FQDN of the installer appliance.
+        * Active software version of the installer.
+        * Current operational status of the installer daemon.
+
+        **Notes:**
+        * This endpoint is independent and does not require any deployed Security Service Platform instances to function.
+      operationId: GetInstallerInfo
+      responses:
+        200:
+          description: Installer information retrieved successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InstallerInfo"
+        default:
+          description: |
+            An error occurred while retrieving installer information.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: []
+        - auditor: []
+
+  /sspi/providers:
+    get:
+      tags:
+        - provider-management
+      summary: List registered vSphere providers
+      description: |
+        Retrieves a paginated list of all configured vSphere (vCenter) provider connections registered with the installer.
+
+        **Notes:**
+        * Providers define the infrastructure layer where platforms will be deployed.
+        * To fetch detailed configuration for a specific provider in this list, use `GET /sspi/providers/{provider-id}`.
+      operationId: GetAllVsphereProviders
+      parameters:
+        - $ref: '#/components/parameters/Offset'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/SortAscending'
+        - $ref: '#/components/parameters/SortBy'
+      responses:
+        200:
+          description: An array of vSphere provider definitions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VsphereProviderDefinitionList'
+        default:
+          description: |
+            An error occurred while fetching vSphere providers.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: []
+        - auditor: []
+    post:
+      tags:
+        - provider-management
+      summary: Register a new vSphere provider connection
+      description: |
+        Registers a new vSphere (vCenter) provider definition with the installer.
+
+        **Workflow Chain:**
+        1. A registered provider ID is required before you can deploy any new platforms via `POST /sspi/platforms`.
+        2. Provide the vCenter URL, credentials, and compute resource details in the request body.
+        3. The response returns the newly generated `provider-id` upon success.
+
+      operationId: CreateVsphereProvider
+      requestBody:
+        required: true
+        description: The credentials and connection details for the target vCenter provider.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VsphereProviderDefinition'
+            example:
+              {
+                "server": "vsphere-server-fqdn.example",
+                "user": "username@vsphere.local",
+                "password": "PasswordExample!123",
+                "certificate": "-----BEGIN CERTIFICATE-----\nMI... (certificate data omitted) ...\n-----END CERTIFICATE-----"
+              }
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VsphereProviderDefinition'
+              example:
+                {
+                  "id": "434348d8-681e-4809-8dc1-427127d2bee7",
+                  "instance_id": "1",
+                  "server": "vsphere-server-fqdn.example",
+                  "user": "ssp-op-some-random-number@vsphere.local",
+                  "password": "******",
+                  "certificate": "",
+                  "state": "{\"lastResetTime\":\"some-date-time\"}",
+                }
+        default:
+          description: |
+            An error occurred while checking the SSPI service.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: []
+
+  /sspi/providers/{provider-id}:
+    get:
+      tags:
+        - provider-management
+      summary: Get vSphere provider configuration by ID
+      description: |
+        Retrieves the complete configuration details and credentials definition for a specific registered vSphere provider.
+      operationId: GetVsphereProvider
+      parameters:
+        - in: path
+          name: provider-id
+          description: A globally unique UUID representing the vSphere provider. This is the ID returned when initially calling `POST /sspi/providers`.
+          required: true
+          example: 434348d8-681e-4809-8dc1-427127d2bee7
+          schema:
+            type: string
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VsphereProviderDefinition'
+        default:
+          description: |
+            An error occurred while checking the SSPI service.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: []
+        - auditor: []
+    put:
+      tags:
+        - provider-management
+      summary: Update a registered vSphere provider configuration
+      description: |
+        Modifies the connection details, credentials, or compute resources of an existing vSphere provider asynchronously.
+
+        **Workflow Chain:**
+        The response returns a `202 Accepted` along with a `status_url`. Call `GET /sspi/providers/{provider-id}/status` to poll the provider update progress and verify connection health.
+      operationId: UpdateVsphereProvider
+      parameters:
+        - in: path
+          name: provider-id
+          description: A globally unique UUID representing the vSphere provider to update.
+          required: true
+          example: 434348d8-681e-4809-8dc1-427127d2bee7
+          schema:
+            type: string
+      requestBody:
+        required: true
+        description: The modified vSphere provider definition to apply.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VsphereProviderDefinition'
+      responses:
+        202:
+          description: |
+            The provider update request has been accepted.
+            Use the returned provider ID and status URL to query for more detailed information.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AsyncApiResponse'
+        default:
+          description: |
+            An error occurred while checking the SSPI service.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: []
+    delete:
+      tags:
+        - provider-management
+      summary: Unregister a vSphere provider
+      description: |
+        Deletes the specified vSphere provider registration from the installer's database.
+
+        **Side Effects:**
+        * This does NOT delete any resources inside vCenter itself.
+        * **Warning:** If platforms are currently deployed and actively tied to this provider, deleting the provider record will orphan them and prevent future LCM operations on those clusters.
+      operationId: DeleteVsphereProvider
+      parameters:
+        - in: path
+          name: provider-id
+          description: A globally unique UUID representing the vSphere provider to delete.
+          example: 434348d8-681e-4809-8dc1-427127d2bee7
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: OK
+        default:
+          description: |
+            An error occurred while checking the SSPI service.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: []
+
+  /sspi/providers/{provider-id}/status:
+    get:
+      tags:
+        - provider-management
+      summary: Poll vSphere provider connection health and workflow status
+      description: |
+        Retrieves the comprehensive health and execution status of the vSphere provider connection.
+
+        **Returns:**
+        * **Connection status:** A boolean indicating whether the installer can currently authenticate and connect to the underlying vCenter server.
+        * **Workflow results:** Detailed execution state of any active asynchronous update tasks triggered by `PUT /sspi/providers/{provider-id}`.
+      operationId: GetProviderStatus
+      parameters:
+        - in: path
+          name: provider-id
+          description: A globally unique UUID representing the vSphere provider.
+          example: 434348d8-681e-4809-8dc1-427127d2bee7
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Comprehensive status of the provider including connection status and workflow results.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderStatus'
+        default:
+          description: |
+            An error occurred while checking the SSPI service.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: []
+        - auditor: []
+
+  #########################
+  # backup restore section
+  #########################
+  /sspi/backup/config:
+    get:
+      tags:
+        - "backup-restore"
+      summary: Get backup configuration
+      operationId: GetBackupConfig
+      description: |
+        Returns saved remote backup server (SFTP) settings used by Backup and Restore. 204 if none configured.
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupConfig'
+        '204':
+          description: No content, backup not configured
+        default:
+          description: Unexpected error occurred
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: [ ]
+        - auditor: [ ]
+        - security_engineer: [ ]
+        - security_op: [ ]
+    put:
+      tags:
+        - "backup-restore"
+      summary: Update backup configuration
+      operationId: UpdateBackupConfig
+      description: Saves remote backup server settings; include current _revision from GET when updating.
+      requestBody:
+        required: true
+        description: Full backup configuration payload to create or replace the remote target.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BackupConfig'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupConfig'
+        default:
+          description: Unexpected error occurred
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: [ ]
+
+  /sspi/backup/recurring/config:
+    get:
+      tags:
+        - "backup-restore"
+      summary: Get recurring backup configuration
+      operationId: GetRecurringBackupConfig
+      description: Returns scheduled (recurring) backup policy. 204 if not configured.
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecurringBackupConfig'
+        '204':
+          description: No content, recurring backup not configured
+        default:
+          description: Unexpected error occurred
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: [ ]
+        - auditor: [ ]
+        - security_engineer: [ ]
+        - security_op: [ ]
+    put:
+      tags:
+        - "backup-restore"
+      summary: Update recurring backup configuration
+      operationId: UpdateRecurringBackupConfig
+      description: Saves scheduled backup policy; set weekly or interval fields to match backup_schedule_type.
+      requestBody:
+        required: true
+        description: Recurring backup policy (enablement, schedule type, and weekly or interval details).
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecurringBackupConfig'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecurringBackupConfig'
+        default:
+          description: Unexpected error occurred
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: [ ]
+
+  /sspi/backup:
+    post:
+      tags:
+        - "backup-restore"
+      summary: Start backup
+      operationId: StartBackup
+      description: Starts an on-demand backup; poll GET /sspi/backup/status/{id} using the id from the 202 response.
+      requestBody:
+        required: true
+        description: Backup type, action, and optional name or description for the job.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BackupRequest'
+      responses:
+        '202':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AsyncApiResponse'
+        default:
+          description: Unexpected error occurred
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: [ ]
+
+  /sspi/backup/status/{id}:
+    get:
+      tags:
+        - "backup-restore"
+      summary: Get backup status
+      operationId: GetBackupStatus
+      description: Returns one backup job by id (from POST /sspi/backup or GET /sspi/backup/status).
+      parameters:
+        - name: id
+          required: true
+          in: path
+          description: Backup job id returned by POST /sspi/backup or listed in history.
+          example: abcde
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupStatus'
+        '404':
+          description: Backup not found for provided id
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected error occurred
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: [ ]
+        - auditor: [ ]
+        - security_engineer: [ ]
+        - security_op: [ ]
+
+  /sspi/backup/status:
+    get:
+      tags:
+        - "backup-restore"
+      summary: Get backup status history
+      operationId: GetBackupStatusHistory
+      description: |
+        Lists backup jobs (newest first). Use page_size=1 with no filters to fetch only the latest job; result may be empty if no backups exist.
+      parameters:
+        - name: status
+          in: query
+          description: Filter by one or more job states (e.g. SUCCESS, FAILED).
+          example: SUCCESS
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/BackupRestoreStatus'
+        - name: history_type
+          in: query
+          description: Read history from database (DB) or remote server (SERVER); defaults to DB if omitted.
+          example: SERVER
+          schema:
+            $ref: '#/components/schemas/BackupHistoryType'
+        - name: trigger_type
+          in: query
+          description: Filter by how the backup was started (e.g. MANUAL or SCHEDULER).
+          example: MANUAL
+          schema:
+            $ref: '#/components/schemas/BackupTriggerType'
+        - name: backup_id
+          in: query
+          description: Return only the job whose backup id matches this value.
+          example: abcde
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Offset'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupStatusList'
+        default:
+          description: Unexpected error occurred
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: [ ]
+        - auditor: [ ]
+        - security_engineer: [ ]
+        - security_op: [ ]
+
+  /sspi/backup/status/{id}/details:
+    get:
+      tags:
+        - "backup-restore"
+      summary: Get backup details
+      operationId: GetBackupDetails
+      description: Returns extended backup metadata (including instance details at backup time) for one backup job id.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Backup job id (same id as in backup status/history).
+          example: abcde
+          schema:
+            type: string
+      responses:
+        200:
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupDetails'
+        '500':
+          description: unexpected error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: [ ]
+        - auditor: [ ]
+
+  /sspi/restore:
+    post:
+      tags:
+        - "backup-restore"
+      summary: Start restore
+      operationId: StartRestore
+      description: Starts restore from backup_id; poll GET /sspi/restore/status/{id} using the id from the 202 response.
+      requestBody:
+        required: true
+        description: Source backup id, restore action, and optional force_restore or labels.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RestoreRequest'
+      responses:
+        '202':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AsyncApiResponse'
+        default:
+          description: Unexpected error occurred
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: [ ]
+
+  /sspi/restore/status/{id}:
+    get:
+      tags:
+        - "backup-restore"
+      summary: Get restore status
+      operationId: GetRestoreStatus
+      description: Returns one restore job by id (from POST /sspi/restore or GET /sspi/restore/status).
+      parameters:
+        - name: id
+          required: true
+          in: path
+          description: Restore job id from POST /sspi/restore or history.
+          example: 12345
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestoreStatus'
+        '404':
+          description: Restore not found for provided id
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected error occurred
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: [ ]
+        - auditor: [ ]
+        - security_engineer: [ ]
+        - security_op: [ ]
+
+  /sspi/restore/status:
+    get:
+      tags:
+        - "backup-restore"
+      summary: Get restore status history
+      operationId: GetRestoreStatusHistory
+      description: |
+        Lists restore jobs (newest first). Optional status filter narrows by job state.
+      parameters:
+        - name: status
+          in: query
+          description: Filter by one or more restore job states (e.g. SUCCESS, IN_PROGRESS).
+          example: SUCCESS
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/BackupRestoreStatus'
+        - $ref: '#/components/parameters/Offset'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestoreStatusList'
+        default:
+          description: Unexpected error occurred
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - enterprise_admin: [ ]
+        - auditor: [ ]
+        - security_engineer: [ ]
+        - security_op: [ ]
+
+components:
+  parameters:
+    Offset:
+      name: offset
+      in: query
+      description: Number of items to skip before starting to collect the result set.
+      schema:
+        type: integer
+        default: 0
+    PageSize:
+      name: pageSize
+      in: query
+      description: The numbers of items to return.
+      schema:
+        type: integer
+        default: 10
+    SortAscending:
+      name: sortAscending
+      in: query
+      description: Sort the items by Ascending (true) or Descending (false).
+      schema:
+        type: boolean
+        default: true
+    SortBy:
+      name: sortBy
+      in: query
+      description: Sort the items by a specific field.
+      schema:
+        type: string
+        default: "id"
+
+  schemas:
+    AsyncApiResponse:
+      title: Async API Response
+      description: Response returned for asynchronous operations.
+      type: object
+      properties:
+        id:
+          type: string
+          description: Workflow or job ID.
+        status_url:
+          type: string
+          description: URL to poll for status.
+
+    ListResult:
+      title: List Result
+      description: Base pagination fields.
+      type: object
+      properties:
+        cursor:
+          type: string
+        result_count:
+          type: integer
+
+    EpochMsTimestamp:
+      type: integer
+      format: int64
+      description: Milliseconds since Unix epoch.
+
+    Resource:
+      title: Base Resource
+      description: Base fields for a resource.
+      type: object
+      properties:
+        id:
+          type: string
+          description: Unique identifier.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ManagedResource:
+      title: Managed Resource
+      description: Common fields for managed resources.
+      type: object
+      properties:
+        id:
+          type: string
+          description: Unique identifier for the resource.
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          description: Resource creation time.
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          description: Resource last update time.
+          readOnly: true
+
+    FormFactor:
+      title: Form Factor
+      description: The compute form factor of the platform.
+      type: string
+      enum:
+        - MEDIUM
+        - LARGE
+        - EXTRA_LARGE
+        - COMPACT
+      default: MEDIUM
+
+    Error:
+      title: Error
+      description: API error response format.
+      type: object
+      properties:
+        error_code:
+          type: integer
+        error_message:
+          type: string
+        details:
+          type: array
+          items:
+            type: string
+
+    PlatformConfigList:
+      title: Platform Configuration List
+      description: A list of all full configurations for the platform.
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ListResult'
+        - type: object
+          properties:
+            configs:
+              description: A list of all full configurations for the platform.
+              type: array
+              items:
+                $ref: '#/components/schemas/PlatformFullConfig'
+              minItems: 0
+              maxItems: 1
+
+    PlatformFullConfig:
+      title: Platform Full Configuration
+      description: Full configuration description for the platform.
+      type: object
+      allOf:
+      - $ref: '#/components/schemas/ManagedResource'
+      - type: object
+        required:
+          - desired_state
+          - compute
+          - network
+          - service
+          - system
+          - provider_id
+        properties:
+          desired_state:
+            type: string
+            description: |
+              Enum for the `desired_state`.
+
+              PRECHECK_ONLY: Saves the configuration and performs only the precheck workflow. This operation can only be performed when the LCM workflow has not started.
+              RESET_PRECHECK: Resets the precheck workflow. This operation can only be performed when the precheck workflow is FAILED.
+              CONTINUE: Starts the LCM workflow with the current configuration. This operation can only be used when the precheck workflow is COMPLETED.
+              START: Saves the configuration and performs the precheck and LCM (Lifecycle Management) workflow. If a previous FAILED or STOPPED LCM workflow exists, use the RETRY operation to continue the workflow or the CLEAN operation to clean it up.
+              STOP: Stops the LCM workflow.
+              RETRY: Retries the current workflow with the current configuration. This operation can only be used when the LCM workflow is in a FAILED or STOPPED state.
+              CLEAN: Cleans up the LCM (Lifecycle Management) workflow. This operation is only supported for the deployment workflow; the configuration update workflow is not supported.
+            enum: ["PRECHECK_ONLY", "RESET_PRECHECK", "CONTINUE", "START", "STOP", "RETRY","CLEAN"]
+            writeOnly: true
+          compute:
+            $ref: '#/components/schemas/PlatformProviderConfig'
+          network:
+            $ref: '#/components/schemas/PlatformNetwork'
+          service:
+            $ref: '#/components/schemas/PlatformServiceConfig'
+          system:
+            $ref: '#/components/schemas/PlatformSystemConfig'
+          provider_id:
+            title: Provider UUID
+            description: |
+              The UUID for the provider in the platform. This is the UUID returned from the POST /sspi/providers API.
+            type: string
+          instance_id:
+            title: Instance ID
+            description: |
+              The SSP platform instance ID.
+            type: string
+            readOnly: true
+
+    LicensingHubConfig:
+      title: LicensingHub Configuration
+      description: |
+        Platform configuration for LicensingHub mode.
+        No vSphere compute or system sizing is required; network and service
+        configurations use simplified LicensingHub-specific schemas.
+      type: object
+      allOf:
+      - $ref: '#/components/schemas/ManagedResource'
+      - type: object
+        required:
+          - desired_state
+          - network
+          - service
+        properties:
+          desired_state:
+            type: string
+            description: |
+              Enum for the `desired_state`.
+
+              PRECHECK_ONLY: Saves the configuration and performs only the precheck workflow. This operation can only be performed when the LCM workflow has not started.
+              RESET_PRECHECK: Resets the precheck workflow. This operation can only be performed when the precheck workflow is FAILED.
+              CONTINUE: Starts the LCM workflow with the current configuration. This operation can only be used when the precheck workflow is COMPLETED.
+              START: Saves the configuration and performs the precheck and LCM (Lifecycle Management) workflow. If a previous FAILED or STOPPED LCM workflow exists, use the RETRY operation to continue the workflow or the CLEAN operation to clean it up.
+              STOP: Stops the LCM workflow.
+              RETRY: Retries the current workflow with the current configuration. This operation can only be used when the LCM workflow is in a FAILED or STOPPED state.
+              CLEAN: Cleans up the LCM (Lifecycle Management) workflow. This operation is only supported for the deployment workflow; the configuration update workflow is not supported.
+            enum: ["PRECHECK_ONLY", "RESET_PRECHECK", "CONTINUE", "START", "STOP", "RETRY","CLEAN"]
+            writeOnly: true
+          provider_id:
+            title: Provider UUID
+            description: |
+              The UUID for the provider in the platform. This is the UUID returned from the POST /sspi/providers API.
+            type: string
+          network:
+            $ref: '#/components/schemas/LicensingHubNetwork'
+          service:
+            $ref: '#/components/schemas/LicensingHubServiceConfig'
+          instance_id:
+            title: Instance ID
+            description: |
+              The SSP platform instance ID.
+            type: string
+            readOnly: true
+
+    LicensingHubNetwork:
+      title: LicensingHub Network
+      description: Network configuration for LicensingHub mode platform deployment.
+      type: object
+      additionalProperties: false
+      required:
+        - ntp
+        - dns
+        - search_domain
+        - network_configs
+      properties:
+        ntp:
+          title: NTP
+          type: string
+          description: The NTP server name.
+        dns:
+          title: DNS
+          type: array
+          items:
+            type: string
+          minItems: 1
+          maxItems: 5
+          description: The DNS servers for the cluster.
+        search_domain:
+          title: Search Domain
+          type: string
+          description: The search domain that will be skipped by the DNS.
+        network_configs:
+          title: Network Configurations
+          description: Network configurations for the LicensingHub platform.
+          type: array
+          items:
+            $ref: '#/components/schemas/LicensingHubNetworkConfig'
+          minItems: 1
+          maxItems: 1
+
+    LicensingHubNetworkConfig:
+      title: LicensingHub Network Configuration
+      description: |
+        Network configuration for LicensingHub mode.
+        No vSphere-specific fields (network_id, portgroup_id, node_pools) are required.
+      type: object
+      additionalProperties: false
+      required:
+        - platform_subnet
+        - platform_default_gateway
+        - service_pools
+      properties:
+        platform_subnet:
+          title: Platform Subnet
+          type: string
+          description: |
+            The subnet where the cluster will be running. This should be entered in CIDR notation (e.g., 192.168.1.1/24).
+        platform_default_gateway:
+          title: Platform Default Gateway
+          type: string
+          description: The default gateway used by the platform nodes.
+        service_pools:
+          title: Service Pools
+          type: array
+          description: The service IP pools.
+          items:
+            $ref: '#/components/schemas/IpPool'
+          minItems: 1
+          maxItems: 5
+
+    LicensingHubServiceConfig:
+      title: LicensingHub Service Configuration
+      description: |
+        Service configuration for LicensingHub mode.
+        No SSP bundle, add-on, or vSphere-specific fields are required.
+      type: object
+      additionalProperties: false
+      required:
+        - ingress_fqdn
+        - kafka_fqdn
+        - instance_name
+      properties:
+        ingress_fqdn:
+          title: Ingress FQDN
+          description: |
+            The FQDN of the Security Service Platform.
+            This FQDN should be associated with the ingress controller's external IP address.
+          type: string
+        kafka_fqdn:
+          title: Kafka FQDN
+          description: |
+            The FQDN of Kafka running in the Security Service Platform.
+            This FQDN should be associated with the kafka-external external IP.
+          type: string
+        password_configuration:
+          $ref: '#/components/schemas/SspPasswordConfig'
+        instance_name:
+          title: Instance Name
+          description: This will be used as the cluster name for the platform. This is not editable after it is set.
+          type: string
+          minLength: 1
+          maxLength: 32
+
+    PlatformProviderConfig:
+      title: Platform Provider Configuration
+      description: vSphere provider configuration for the platform.
+      type: object
+      additionalProperties: false
+      required:
+        - datacenter_id
+        - cluster_id
+        - storage_policy_id
+        - content_datastore_id
+      properties:
+        datacenter_name:
+          type: string
+          title: vSphere Datacenter Name
+          description: The vSphere datacenter name.
+          readOnly: true
+        datacenter_id:
+          title: vSphere Datacenter Moref ID
+          type: string
+          description: The vSphere datacenter moref ID.
+        cluster_name:
+          type: string
+          title: vSphere Cluster Name
+          description: The vSphere cluster name.
+          readOnly: true
+        cluster_id:
+          type: string
+          title: vSphere Cluster Moref ID
+          description: The vSphere cluster moref ID.
+        resource_pool_name:
+          type: string
+          title: vSphere Parent Resource Pool Name
+          description: The vSphere parent resource pool name.
+          readOnly: true
+        resource_pool_id:
+          type: string
+          title: vSphere Parent Resource Pool Moref ID
+          description: The vSphere parent resource pool moref ID.
+        ssp_resource_pool_name:
+          type: string
+          title: SSP Resource Pool Name
+          description: The name of the SSP resource pool, which is automatically created under the parent resource pool.
+          readOnly: true
+        ssp_resource_pool_id:
+          type: string
+          title: SSP Resource Pool Moref ID
+          description: The moref ID of the SSP resource pool.
+          readOnly: true
+        enable_resource_reservation:
+          title: Reserve Resource
+          type: boolean
+          default: true
+          description: Indicates if CPU and memory resources for the SSP instance should be reserved at the resource pool level.
+        vm_folder_name:
+          title: VM Folder Name
+          type: string
+          description: The vSphere VM folder name.
+          readOnly: true
+        storage_policy_name:
+          title: Storage Policy Name
+          type: string
+          description: The vSphere storage policy name (e.g., vSAN).
+          readOnly: true
+        storage_policy_id:
+          title: Storage Policy UUID
+          type: string
+          description: The vSphere storage policy UUID.
+        content_datastore_name:
+          title: Content Datastore Name
+          type: string
+          description: The vSphere content datastore name.
+          readOnly: true
+        content_datastore_id:
+          title: Content Datastore Moref ID
+          type: string
+          description: The vSphere content datastore moref ID.
+        vm_template:
+          title: VM Template
+          type: string
+          description: The vSphere template name.
+          readOnly: true
+
+    PlatformNetwork:
+      title: Platform Network
+      description: Network configuration for the platform.
+      type: object
+      additionalProperties: false
+      required:
+        - ntp
+        - dns
+        - search_domain
+        - network_configs
+      properties:
+        ntp:
+          title: NTP
+          type: string
+          description: The NTP server name.
+        dns:
+          title: DNS
+          type: array
+          items:
+            type: string
+          minItems: 1
+          maxItems: 5
+          description: The DNS servers for the cluster.
+        search_domain:
+          title: Search Domain
+          type: string
+          description: The search domain that will be skipped by the DNS.
+        network_configs:
+          title: Network Configurations
+          description: Specific network configurations for the platform.
+          type: array
+          items:
+            $ref: '#/components/schemas/PlatformNetworkConfig'
+          minItems: 1
+          maxItems: 1
+
+    PlatformNetworkConfig:
+      title: Platform Network Configuration
+      description: Specific network configuration for the platform.
+      type: object
+      additionalProperties: false
+      required:
+        - platform_subnet
+        - platform_default_gateway
+        - network_id
+        - portgroup_id
+        - node_pools
+        - service_pools
+      properties:
+        platform_subnet:
+          title: Platform Subnet
+          type: string
+          description: |
+            The subnet where the cluster will be running. This should be entered in CIDR notation (e.g., 192.168.1.1/24).
+            The network subnet should be created ahead of time based on the `getVspherePortGroups`.
+        platform_default_gateway:
+          title: Platform Default Gateway
+          type: string
+          description: The default gateway used by the platform nodes.
+        network_name:
+          title: Virtual Switch Name
+          type: string
+          description: The name of the virtual switch for platform cluster nodes.
+          readOnly: true
+        network_id:
+          title: Virtual Switch ID
+          type: string
+          description: The virtual switch moref ID for platform cluster nodes.
+        portgroup_name:
+          title: Portgroup Name
+          type: string
+          description: The name of the portgroup used for platform cluster nodes.
+          readOnly: true
+        portgroup_id:
+          title: Portgroup ID
+          type: string
+          description: The portgroup moref ID used for platform cluster nodes.
+        node_pools:
+          title: Node Pools
+          type: array
+          description: The node IP pools.
+          items:
+            $ref: '#/components/schemas/IpPool'
+          minItems: 1
+          maxItems: 5
+        service_pools:
+          title: Service Pools
+          type: array
+          description: The service IP pools.
+          items:
+            $ref: '#/components/schemas/IpPool'
+          minItems: 1
+          maxItems: 5
+
+    IpPool:
+      title: IP Pool
+      description: An IP pool object.
+      type: object
+      additionalProperties: false
+      required:
+        - start
+        - end
+      properties:
+        start:
+          title: Starting Address
+          type: string
+          description: The IPv4 or IPv6 starting address.
+        end:
+          title: Ending Address
+          type: string
+          description: The IPv4 or IPv6 ending address.
+        name:
+          title: IP Pool Name
+          type: string
+          description: The IPAM pool name.
+
+    PlatformServiceConfig:
+      title: Platform Service Configuration
+      description: Service (SSP) specific configuration.
+      type: object
+      additionalProperties: false
+      required:
+        - ingress_fqdn
+        - kafka_fqdn
+        - ssp_bundle_id
+        - instance_name
+      properties:
+        ingress_fqdn:
+          title: Ingress FQDN
+          description: |
+            The FQDN of the Security Service Platform.
+            This FQDN should be associated with the ingress controller's external IP address.
+            See `projectcontour-envoy` in the `projectcontour` namespace.
+          type: string
+        kafka_fqdn:
+          title: Kafka FQDN
+          description: |
+            The FQDN of Kafka running in the Security Service Platform.
+            This FQDN should be associated with the `kafka-external` external IP.
+            See the `kafka-external` service in the `nsxi-platform` namespace.
+          type: string
+        ssp_bundle_version:
+          title: SSP Bundle Version
+          description: The Security Service Platform bundle version to be deployed.
+          type: string
+          readOnly: true
+        ssp_bundle_id:
+          title: SSP Bundle ID
+          description: The Security Service Platform bundle ID to be deployed.
+          type: string
+        password_configuration:
+          $ref: '#/components/schemas/SspPasswordConfig'
+        instance_name:
+          title: Instance Name
+          description: This will be used as the cluster name for the platform. This is not editable after it is set.
+          type: string
+          minLength: 1
+          maxLength: 32
+        addon_ids:
+          title: Add-on IDs
+          description: The Security Service Platform add-ons to attach.
+          type: array
+          items:
+            type: string
+        preserve_addons:
+          title: Add-on preservation
+          description: Toggle to retain compatible add-ons across instance upgrade.
+          type: boolean
+
+    SspPasswordConfig:
+      title: SSP Password Configuration
+      description: The SSP admin and audit passwords.
+      type: object
+      additionalProperties: false
+      writeOnly: true
+      required:
+        - admin_password
+        - audit_password
+      properties:
+        admin_password:
+          title: Admin Password
+          description: The Security Service Platform admin user password.
+          type: string
+          writeOnly: true
+        audit_password:
+          title: Audit Password
+          description: The Security Service Platform audit user password.
+          type: string
+          writeOnly: true
+
+    # Manages typical k8s related settings
+    # For upgrading k8s version, vm templates, use the upgrade agent API
+    PlatformSystemConfig:
+      title: Platform System Configuration
+      description: Kubernetes-specific configuration.
+      type: object
+      additionalProperties: false
+      properties:
+        ssp_type:
+          $ref: '#/components/schemas/SspType'
+        controller_count:
+          title: Controller Count
+          description: |
+            The number of controller nodes.
+            ADVANCED/LARGE form factor: Minimum count is 3, maximum count is 3, and the default count is 3.
+            MEDIUM form factor: Minimum count is 3, maximum count is 3, and the default count is 3.
+            LICENSING deployment (ssp_type=licensing): Minimum count is 1, maximum count is 3, and the default count is 1.
+            EXTRA_LARGE form factor: Minimum count is 3, maximum count is 3, and the default count is 3.
+          type: integer
+          minimum: 1
+          maximum: 3
+          default: 3
+        worker_count:
+          title: Worker Count
+          description: |
+            The number of worker nodes.
+            ADVANCED/LARGE form factor: Minimum count is 4, maximum count is 10, and the default count is 4.
+            MEDIUM form factor: Exactly 2 worker nodes required. To scale beyond 2 workers, upgrade to Large form factor.
+            LICENSING deployment (ssp_type=LICENSING): Minimum count is 1, maximum count is 4, and the default count is 1.
+            AVI deployment (ssp_type=AVI_OPERATIONS): Minimum count is 2, maximum count is 2, and the default count is 2.
+            EXTRA_LARGE form factor: Minimum count is 8, maximum count is 14, and the default count is 8.
+          type: integer
+          minimum: 1
+          maximum: 15
+          default: 4
+        form_factor:
+          $ref: '#/components/schemas/FormFactor'
+
+    SspType:
+      title: SSP Type
+      description: |
+        The type of SSP deployment.
+        - ATP: Advanced Threat Protection (standard SSP deployment, uses form_factor for sizing)
+        - LICENSING: Licensing-only deployment (fixed sizing, form_factor is SMALL)
+        - AVI_OPERATIONS: AVI Operations deployment (fixed sizing, form_factor is SMALL)
+      type: string
+      enum:
+        - "ATP"
+        - "LICENSING"
+        - "AVI_OPERATIONS"
+      default: "ATP"
+
+    PlatformStatusEnum:
+      title: Platform Status Enum
+      description: Enum for the overall platform status.
+      type: string
+      enum: [INITIALIZED, DEPLOYING, DEPLOYED, ERROR, UNDEPLOYING]
+
+    PlatformOverallHealthStatus:
+      title: Platform Overall Health Status
+      description: The overall health status of the Security Service Platform and Installer.
+      type: string
+      enum:
+        - HEALTHY
+        - UNHEALTHY
+
+    FQDNStatus:
+      title: FQDN of the Security Service Platform Ingress
+      description: The FQDN of the Security Service Platform Ingress.
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          title: Name of the FQDN
+          description: The name of the FQDN.
+        state:
+          $ref: "#/components/schemas/FQDNStateEnum"
+        ip:
+          type: string
+          title: IP of the FQDN (Optional)
+          description: The IP of the FQDN (optional).
+
+    FQDNStateEnum:
+      title: FQDN State Enum
+      description: Enum for the FQDN status.
+      type: string
+      enum: [HEALTHY, UNHEALTHY]
+
+    NodeStatus:
+      title: Node Status
+      description: Kubernetes node information.
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          title: Name of the Node
+          description: The name of the node.
+        internal_ip:
+          type: string
+          title: Internal IP of the Node
+          description: The internal IP of the node.
+        used_cpu:
+          type: number
+          format: float
+          title: Used CPU of the Node
+          description: The used CPU of the node in cores.
+        used_disk:
+          type: number
+          format: float
+          title: Used Disk of the Node
+          description: The used disk of the node in GB.
+        used_memory:
+          type: number
+          format: float
+          title: Used Memory of the Node
+          description: The used memory of the node in GB.
+        allocated_cpu:
+          type: number
+          format: float
+          title: Allocated CPU of the Node
+          description: The allocated CPU of the node in cores.
+        allocated_disk:
+          type: number
+          format: float
+          title: Allocated Disk of the Node
+          description: The allocated disk of the node in GB.
+        allocated_memory:
+          type: number
+          format: float
+          title: Allocated Memory of the Node
+          description: The allocated memory of the node in GB.
+        system_info:
+          $ref: "#/components/schemas/NodeSystemInfo"
+        ready:
+          $ref: "#/components/schemas/NodeStatusEnum"
+        is_control_plane:
+          type: boolean
+          title: Control Plane Node
+          description: Indicates if the node is a control plane.
+
+    NodeStatusEnum:
+      title: Node Status Enum
+      description: The status of the node's ready condition, which can be one of TRUE, FALSE, or UNKNOWN.
+      type: string
+      enum: ["TRUE", "FALSE", "UNKNOWN"]
+
+    NodeSystemInfo:
+      title: Node System Information
+      description: Kubernetes node system information.
+      type: object
+      additionalProperties: false
+      properties:
+        machine_id:
+          type: string
+          title: MachineID Reported by the Node
+          description: The MachineID reported by the node.
+        system_uuid:
+          type: string
+          title: SystemUUID Reported by the Node
+          description: The SystemUUID reported by the node.
+        boot_id:
+          type: string
+          title: Boot ID Reported by the Node
+          description: The Boot ID reported by the node.
+        kernel_version:
+          type: string
+          title: Kernel Version Reported by the Node
+          description: The Kernel Version reported by the node.
+        os_image:
+          type: string
+          title: OS Image Reported by the Node
+          description: The OS Image reported by the node.
+        container_runtime_version:
+          type: string
+          title: ContainerRuntime Version Reported by the Node
+          description: The ContainerRuntime Version reported by the node.
+        kubelet_version:
+          type: string
+          title: Kubelet Version Reported by the Node
+          description: The Kubelet Version reported by the node.
+        kubeproxy_version:
+          type: string
+          title: KubeProxy Version Reported by the Node
+          description: The KubeProxy Version reported by the node.
+        operating_system:
+          type: string
+          title: Operating System Reported by the Node
+          description: The Operating System reported by the node.
+        architecture:
+          type: string
+          title: Architecture Reported by the Node
+          description: The Architecture reported by the node.
+
+    NamespaceStatus:
+      title: Namespace Status
+      description: Critical information under the namespace.
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          title: Name of Namespace
+          description: The name of the namespace.
+        phase:
+          type: string
+          title: Current Lifecycle Phase of the Namespace
+          description: The current lifecycle phase of the namespace.
+        pod_status:
+          title: Pod Status
+          description: The pod status.
+          type: array
+          items:
+            $ref: "#/components/schemas/PodStatus"
+        service_status:
+          title: Service Status
+          description: The service status.
+          type: array
+          items:
+            $ref: "#/components/schemas/ServiceStatus"
+
+    PodStatus:
+      title: Pod Status
+      description: Critical pod information.
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          title: Name of the Pod
+          description: The name of the pod.
+        phase:
+          type: string
+          title: High-Level Summary of a Pod's Lifecycle
+          description: A high-level summary of where the Pod is in its lifecycle.
+        pod_ip:
+          type: string
+          title: PodIP Address Allocated to the Pod
+          description: The PodIP address allocated to the pod.
+        status:
+          type: string
+          title: Status of the Pod
+          description: The status of the Pod.
+        status_message:
+          type: string
+          title: Detailed Message for Pod Status in Error
+          description: A detailed message for the pod status when it is in an error state.
+
+    ServiceStatus:
+      title: Service Status
+      description: Critical service information.
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          title: Name of the Service
+          description: The name of the service.
+        cluster_ip:
+          type: string
+          title: Cluster IP Address of the Service
+          description: The cluster IP address of the service.
+        external_ips:
+          type: array
+          items:
+            type: string
+          title: External IP Addresses of the Service
+          description: The external IP addresses of the service.
+
+    StorageClass:
+      title: Storage Class
+      description: A storage class in the workload cluster.
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          title: Name of the Storage Class
+          description: The name of the storage class.
+        provisioner:
+          type: string
+          title: Type of the Provisioner
+          description: The type of the provisioner.
+        parameters:
+          title: Storage Class Parameters
+          description: The storage class parameters.
+          type: array
+          items:
+            $ref: "#/components/schemas/StorageClassParameters"
+
+    StorageClassParameters:
+      title: Storage Class Parameters
+      description: The parameters for the provisioner.
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          title: Name of the Storage Class Parameter
+          description: The name of the storage class parameter.
+        value:
+          type: string
+          title: Value of the Storage Class Parameter
+          description: The value of the storage class parameter.
+
+    VSphereVM:
+      title: vSphere VM
+      description: The schema for the vSphere VMs API.
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          title: Name of the vSphere VM
+          description: The name of the vSphere VM.
+        datacenter:
+          type: string
+          title: Datacenter of the vSphere VM
+          description: The datacenter of the vSphere VM.
+        datastore:
+          type: string
+          title: Datastore of the vSphere VM
+          description: The datastore of the vSphere VM.
+        disk:
+          type: integer
+          title: DiskGib of the vSphere VM
+          description: The disk size in GiB of the vSphere VM.
+        folder:
+          type: string
+          title: Folder of the vSphere VM
+          description: The folder of the vSphere VM.
+        memory:
+          type: integer
+          title: MemoryMib of the vSphere VM
+          description: The memory size in MiB of the vSphere VM.
+        resource_pool:
+          type: string
+          title: Resource Pool of the vSphere VM
+          description: The resource pool of the vSphere VM.
+        server:
+          type: string
+          title: Server of the vSphere VM
+          description: The server of the vSphere VM.
+        storage_policy:
+          type: string
+          title: Storage Policy of the vSphere VM
+          description: The storage policy of the vSphere VM.
+        template:
+          type: string
+          title: Template of the vSphere VM
+          description: The template of the vSphere VM.
+        thumbprint:
+          type: string
+          title: Thumbprint of the vSphere VM
+          description: The thumbprint of the vSphere VM.
+        status:
+          $ref: "#/components/schemas/VSphereVMStatus"
+        network:
+          $ref: "#/components/schemas/VSphereVMNetwork"
+
+    VSphereVMStatus:
+      title: vSphere VM Status
+      description: The overall status of the vSphere VM.
+      type: object
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+          title: Status of the Condition
+          description: The status of the condition.
+        reason:
+          type: string
+          title: Brief Reason for the Condition
+          description: A brief reason for the condition.
+        message:
+          type: string
+          title: Human-Readable Message Indicating Details
+          description: A human-readable message indicating details.
+
+    VSphereVMNetwork:
+      title: vSphere VM Network
+      description: The network status of the vSphere VM.
+      type: object
+      additionalProperties: false
+      properties:
+        devices:
+          title: Devices
+          description: The devices of the vSphere VM network.
+          type: array
+          items:
+            $ref: "#/components/schemas/VSphereVMDevice"
+
+    VSphereVMDevice:
+      title: vSphere VM Device
+      description: A device of the vSphere VM network.
+      type: object
+      additionalProperties: false
+      properties:
+        network_name:
+          title: Network Name
+          type: string
+          description: The name of the network.
+        nameservers:
+          title: Nameservers
+          description: The nameservers of the vSphere VM network.
+          type: array
+          items:
+            type: string
+        addresses_from_pools:
+          title: Addresses From Pools
+          description: The AddressesFromPools of the vSphere VM network.
+          type: array
+          items:
+            $ref: "#/components/schemas/AddressesFromPool"
+
+    AddressesFromPool:
+      title: Addresses From Pool
+      description: The AddressesFromPool of the vSphere VM network.
+      type: object
+      additionalProperties: false
+      properties:
+        api_group:
+          type: string
+          title: API Group of AddressesFromPool
+          description: The ApiGroup of AddressesFromPool.
+        kind:
+          type: string
+          title: Kind of AddressesFromPool
+          description: The Kind of AddressesFromPool.
+        name:
+          type: string
+          title: Name of AddressesFromPool
+          description: The name of AddressesFromPool.
+
+    InfraCluster:
+      title: Infra Cluster
+      description: The schema for the clusters API.
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          title: Name of Clusters
+          description: The name of the clusters.
+        controlplane_endpoint:
+          $ref: "#/components/schemas/InfraClusterControlPlane"
+        status:
+          $ref: "#/components/schemas/InfraClusterStatus"
+
+    InfraClusterControlPlane:
+      title: Infra Cluster Control Plane
+      description: The ControlPlane endpoint of the cluster.
+      type: object
+      additionalProperties: false
+      properties:
+        host:
+          type: string
+          title: Host of Control Plane
+          description: The host of the control plane.
+        port:
+          type: integer
+          title: Port of Control Plane
+          description: The port of the control plane.
+
+    InfraClusterStatus:
+      title: Infra Cluster Status
+      description: The overall status of the clusters.
+      type: object
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+          title: Status of the Condition
+          description: The status of the condition.
+        reason:
+          type: string
+          title: Brief Reason for the Condition
+          description: A brief reason for the condition.
+        message:
+          type: string
+          title: Human-Readable Message Indicating Details
+          description: A human-readable message indicating details.
+
+    PlatformHealthStatus:
+      title: Platform Health Status
+      description: The status of the platform's health.
+      type: object
+      additionalProperties: false
+      properties:
+        kubernetes_version:
+          title: Kubernetes Version Hosted by the Security Service Platform
+          description: The Kubernetes version hosted by the Security Service Platform.
+          type: string
+          readOnly: true
+        security_service_platform_version:
+          title: Security Service Platform Version
+          description: The Security Service Platform version.
+          type: string
+          readOnly: true
+        overall_status:
+          $ref: "#/components/schemas/PlatformStatusEnum"
+        overall_health:
+          $ref: "#/components/schemas/PlatformOverallHealthStatus"
+        installer_status:
+          $ref: "#/components/schemas/PlatformStatusEnum"
+        platform_status:
+          $ref: "#/components/schemas/PlatformStatusEnum"
+        installer_fqdn:
+          $ref: '#/components/schemas/FQDNStatus'
+        ingress_fqdn:
+          $ref: '#/components/schemas/FQDNStatus'
+        kafka_fqdn:
+          $ref: '#/components/schemas/FQDNStatus'
+        management_nodes:
+          title: Management Cluster Nodes Health
+          description: The health of the management cluster nodes.
+          type: array
+          items:
+            $ref: "#/components/schemas/NodeStatus"
+          readOnly: true
+        workload_nodes:
+          title: Workload Cluster Nodes Health
+          description: The health of the workload cluster nodes.
+          type: array
+          items:
+            $ref: "#/components/schemas/NodeStatus"
+          readOnly: true
+        creation_time:
+          $ref: '#/components/schemas/EpochMsTimestamp'
+        modified_time:
+          $ref: '#/components/schemas/EpochMsTimestamp'
+        management_namespace_status:
+          title: Management Cluster Critical Resource Status by Namespace
+          description: The status of critical resources in the management cluster, organized by namespace.
+          type: array
+          items:
+            $ref: "#/components/schemas/NamespaceStatus"
+          readOnly: true
+        workload_namespace_status:
+          title: Workload Cluster Critical Resource Status by Namespace
+          description: The status of critical resources in the workload cluster, organized by namespace.
+          type: array
+          items:
+            $ref: "#/components/schemas/NamespaceStatus"
+          readOnly: true
+        storage_class:
+          title: Workload Cluster Storage Class
+          description: The storage class of the workload cluster.
+          type: array
+          items:
+            $ref: "#/components/schemas/StorageClass"
+          readOnly: true
+        vsphere_vms:
+          title: vSphere VMs Status
+          description: The status of the vSphere VMs.
+          type: array
+          items:
+            $ref: "#/components/schemas/VSphereVM"
+          readOnly: true
+        clusters:
+          title: Clusters Status
+          description: The status of the clusters.
+          type: array
+          items:
+            $ref: "#/components/schemas/InfraCluster"
+          readOnly: true
+        installer_version:
+          title: Security Service Platform Installer Version
+          description: The version of the Security Service Platform Installer.
+          type: string
+          readOnly: true
+        vcenter_version:
+          title: vCenter Version
+          description: The version of the vCenter.
+          type: string
+          readOnly: true
+
+    InstallerInfo:
+      title: Installer Information
+      description: Information about the Security Service Platform Installer.
+      type: object
+      additionalProperties: false
+      properties:
+        fqdn:
+          $ref: '#/components/schemas/FQDNStatus'
+        version:
+          title: Installer Version
+          description: The version of the Security Service Platform Installer.
+          type: string
+          readOnly: true
+        status:
+          $ref: '#/components/schemas/PlatformStatusEnum'
+
+    WorkflowStatus:
+      title: Workflow Status
+      description: The security service workflow status.
+      type: object
+      additionalProperties: false
+      properties:
+        platform_id:
+          type: string
+          title: ID of the SSP instance.
+          description: The ID of the SSP instance.
+        platform_name:
+          type: string
+          title: Name of the SSP instance.
+          description: The name of the SSP instance.
+        phase:
+          type: string
+          title: Workflow Phase
+          description: |
+            The current phase of the workflow.
+            - DRAFT: The starting phase.
+            - PRECHECK: The phase where the deployment precheck takes place.
+            - DEPLOYMENT: The phase where the deployment takes place.
+            - DELETE: The phase for cleanup platform tasks after completion.
+            - UPDATE_PRECHECK: The phase where the update platform precheck takes place after deployment.
+            - UPDATE: The phase where the update platform takes place after deployment.
+          enum:
+            - DRAFT
+            - PRECHECK
+            - DEPLOYMENT
+            - DELETE
+            - UPDATE_PRECHECK
+            - UPDATE
+        workflow_results:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowResult'
+          title: Workflow Results
+          description: A list of workflow results.
+
+    WorkflowResult:
+      title: Workflow Result
+      description: The security service workflow results.
+      type: object
+      additionalProperties: false
+      properties:
+        display_name:
+          type: string
+          title: Workflow Name
+          description: The name of the workflow.
+        type:
+          type: string
+          title: Workflow Type
+          description: The type of the workflow.
+          enum:
+           - PLATFORM_DEPLOYMENT
+           - PLATFORM_DELETE
+           - PLATFORM_DEPLOYMENT_PRECHECK
+           - CONFIG_UPDATE
+           - CONFIG_UPDATE_PRECHECK
+           - PROVIDER_UPDATE
+        start_time:
+          $ref: '#/components/schemas/EpochMsTimestamp'
+        end_time:
+          $ref: '#/components/schemas/EpochMsTimestamp'
+        state:
+          type: string
+          title: Workflow State
+          description: The current status of the workflow.
+          enum: [ "UNKNOWN", "NOT_STARTED", "QUEUED", "RUNNING", "STOPPING", "STOPPED", "FAILED",
+                  "ROLLBACK_QUEUED", "ROLLBACK_RUNNING", "ROLLBACK_STOPPING", "ROLLBACK_STOPPED", "ROLLBACK_FAILED",
+                  "ROLLBACK_COMPLETED", "ABORTED", "COMPLETED" ]
+        phase:
+          type: string
+          title: Workflow Phase
+          description: The current phase of the workflow.
+          enum: [ "DRAFT", "EXECUTE", "COMPLETE", "DELETE" ]
+        jobs:
+          type: array
+          title: Workflow Jobs
+          items:
+            $ref: '#/components/schemas/JobResult'
+          description: A list of job states that belong to this workflow.
+
+    JobResult:
+      title: Job Result
+      description: The security service task results.
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: integer
+          title: Job ID
+          description: The ID of the job.
+        display_name:
+          type: string
+          title: Job Name
+          description: The name of the job.
+        details:
+          type: string
+          title: Job Details
+          description: Additional information about the job.
+        start_time:
+          $ref: '#/components/schemas/EpochMsTimestamp'
+        end_time:
+          $ref: '#/components/schemas/EpochMsTimestamp'
+        state:
+          type: string
+          title: Job State
+          description: The current status of the job.
+          enum: [ "UNKNOWN", "NOT_STARTED", "QUEUED", "RUNNING", "STOPPING", "STOPPED", "FAILED",
+                  "ROLLBACK_QUEUED", "ROLLBACK_RUNNING", "ROLLBACK_STOPPING", "ROLLBACK_STOPPED", "ROLLBACK_FAILED",
+                  "ROLLBACK_COMPLETED", "ABORTED", "COMPLETED_WITH_WARNING", "COMPLETED" ]
+
+    VsphereProviderDefinitionList:
+      title: vSphere Provider Definition List
+      description: A list of all vSphere providers.
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/ListResult'
+        - type: object
+          properties:
+            configs:
+              description: A list of all vSphere providers.
+              type: array
+              items:
+                $ref: '#/components/schemas/VsphereProviderDefinition'
+              minItems: 0
+              maxItems: 3
+
+    VsphereProviderDefinition:
+      title: vSphere Provider Definition
+      description: The vSphere provider definition.
+      type: object
+      allOf:
+      - $ref: '#/components/schemas/ManagedResource'
+      - type: object
+        required:
+          - server
+          - user
+          - password
+          - certificate
+        properties:
+          server:
+            type: string
+            title: IP or FQDN of the vSphere
+            description: The IP or FQDN of the vSphere.
+          user:
+            type: string
+            title: User for vSphere with Administrative Access
+            description: A user for vSphere with administrative access.
+          password:
+            type: string
+            format: password
+            title: Password for vSphere User
+            description: The password for the vSphere user. This field should be masked for read access.
+            writeOnly: true
+          certificate:
+            title: PEM-Encoded Certificate for the vCenter
+            description: |
+              The PEM-encoded certificate for the vCenter.
+            type: string
+            writeOnly: true
+          state:
+            title: JSON-Encoded Additional Metadata About the Provider
+            description: |
+              JSON-encoded additional metadata about the provider.
+            type: string
+            readOnly: true
+          instance_id:
+            title: Instance ID
+            description: The instance ID of the vSphere provider in the Security Service Platform Installer.
+            type: string
+            readOnly: true
+
+    ProviderConnectionStatus:
+      title: Provider Connection Status
+      description: The provider connection status.
+      type: object
+      additionalProperties: false
+      required:
+        - message
+        - state
+      properties:
+        message:
+          type: string
+          title: Summary of Connection Status
+          description: A summary of the connection status.
+        state:
+          $ref: '#/components/schemas/ProviderConnectionStatusEnum'
+
+    ProviderConnectionStatusEnum:
+      title: Provider Connection Status Enum
+      description: Enum for the provider connection status.
+      type: string
+      enum: [CONNECTED, NOT_CONNECTED]
+
+    GlobalSettings:
+      title: Global secop settings
+      description: The global settings for secop. This is a read-only response schema.
+      type: object
+      additionalProperties: false
+      properties:
+        max_controller_node:
+          type: integer
+          format: int64
+          title: Max Supported Controller Nodes
+          description: This is the max number of controller nodes supported.
+          readOnly: true
+        min_controller_node:
+          type: integer
+          format: int64
+          title: Minimum Supported Controller Nodes
+          description: This is the minimum number of controller nodes supported.
+          readOnly: true
+        max_worker_node:
+          type: integer
+          format: int64
+          title: Max Supported Worker Nodes
+          description: This is the max number of worker nodes supported.
+          readOnly: true
+        min_worker_node:
+          type: integer
+          format: int64
+          title: Minimum Supported Worker Nodes
+          description: This is the minimum number of worker nodes supported.
+          readOnly: true
+        min_node_ip_pool_count:
+          type: integer
+          format: int64
+          title: Minimum Node IP Pool Count
+          description: |
+            The minimum number of IPs required in the Node IP Pool. Calculated as:
+            2 (1 for VIP + 1 for rolling upgrade) + controller_count + worker_count.
+            Uses min_worker_nodes if worker_count query parameter is not provided.
+          readOnly: true
+        min_service_ip_pool_count:
+          type: integer
+          format: int64
+          title: Minimum Service IP Pool Count
+          description: |
+            The minimum number of IPs required in the Service IP Pool. Calculation varies by deployment:
+            - Licensing/AVI Operations/Evaluation: 3 IPs (1 Contour + 1 kafka-external + 1 kafka broker)
+            - Medium: 5 IPs (1 Contour + 1 kafka-external + 3 kafka brokers hardcoded)
+            - Large/Extra-Large: 3 + ceil(worker_count/2) for extra kafka brokers
+            Uses min_worker_nodes if worker_count query parameter is not provided.
+          readOnly: true
+
+    ProviderStatus:
+      title: Provider Status
+      description: |
+        The comprehensive status of the provider, including both connection status
+        and provider realization workflow status.
+      type: object
+      additionalProperties: false
+      properties:
+        provider_id:
+          type: string
+          title: ID of the Provider
+          description: The ID of the provider.
+        connection_status:
+          $ref: '#/components/schemas/ProviderConnectionStatus'
+        workflow_results:
+          $ref: '#/components/schemas/WorkflowResult'
+
+    # Extend common BackupConfig with ManagedResource
+    BackupConfig:
+      title: Remote backup server configuration
+      description: SFTP target host, credentials, and folder where backup bundles are stored.
+      allOf:
+        - $ref: '#/components/schemas/ManagedResource'
+        - type: object
+          title: Connection details for the backup repository
+          description: Required fields define where the installer writes backups.
+          required:
+            - server_address
+            - protocol
+            - port
+            - username
+            - backup_location
+            - ssh_public_key
+            - password
+          properties:
+            server_address:
+              title: Server Address
+              type: string
+              maxLength: 255
+              description: FQDN or IP address of backup server
+            protocol:
+              title: Protocol
+              type: string
+              enum:
+                - SFTP
+              description: File transfer protocol supported by backup server
+            port:
+              title: Port
+              type: integer
+              minimum: 1
+              maximum: 65535
+              description: Configured port for proxy
+            username:
+              title: Username
+              type: string
+              description: User name for ssh access to file server
+              minLength: 3
+              maxLength: 30
+            ssh_public_key:
+              title: SSH Public Key
+              type: string
+              description: The SSH public key of the file server
+            backup_location:
+              title: Backup Location
+              type: string
+              description: Directory in backup server
+            password:
+              title: Password
+              type: string
+              format: password
+              writeOnly: true
+              minLength: 6
+              maxLength: 255
+              description: Password for file server authentication
+            passphrase:
+              title: Passphrase
+              type: string
+              format: password
+              writeOnly: true
+              description: Passphrase to secure backup bundle file
+              minLength: 12
+              maxLength: 255
+
+    # RecurringBackupConfig with ManagedResource
+    RecurringBackupConfig:
+      title: Scheduled (recurring) backup policy
+      description: Whether automated backups run, full backup type, and weekly or interval schedule.
+      allOf:
+        - $ref: '#/components/schemas/ManagedResource'
+        - type: object
+          title: Automated backup schedule
+          description: When enabled, backups run on the configured weekly or interval schedule.
+          required:
+            - enabled
+            - backup_type
+            - backup_schedule_type
+          properties:
+            enabled:
+              title: Enabled
+              type: boolean
+              description: Flag to indicate automated backups are enabled or not
+            backup_type:
+              $ref: '#/components/schemas/BackupType'
+            backup_schedule_type:
+              $ref: '#/components/schemas/BackupScheduleType'
+            backup_schedule_weekly:
+              $ref: '#/components/schemas/WeeklyBackupSchedule'
+            backup_schedule_interval:
+              $ref: '#/components/schemas/IntervalBackupSchedule'
+
+    BackupScheduleType:
+      title: Backup Schedule Type
+      type: string
+      enum:
+        - WEEKLY
+        - INTERVAL
+      description: WEEKLY uses calendar days and time; INTERVAL uses hours between runs.
+
+    WeeklyBackupSchedule:
+      title: Weekly Backup Schedule
+      type: object
+      required:
+        - days_of_week
+      description: Days of week and local time when a WEEKLY scheduled backup runs.
+      properties:
+        days_of_week:
+          title: Days Of Week
+          description: Days of week when backup is taken. Sunday, Monday, Tuesday...
+          type: array
+          items:
+            $ref: '#/components/schemas/WeekDay'
+          uniqueItems: true
+          minItems: 1
+          maxItems: 7
+        hour_of_day:
+          title: Hour Of Day
+          description: Hour of day when backup is taken
+          type: integer
+          minimum: 0
+          maximum: 23
+          default: 0
+        minute_of_day:
+          title: Minute Of Day
+          description: Minute of hour when backup is taken
+          type: integer
+          minimum: 0
+          maximum: 59
+          default: 0
+
+    WeekDay:
+      title: Week Day
+      type: string
+      enum:
+        - SUNDAY
+        - MONDAY
+        - TUESDAY
+        - WEDNESDAY
+        - THURSDAY
+        - FRIDAY
+        - SATURDAY
+      description: Calendar weekday for weekly schedules.
+
+    IntervalBackupSchedule:
+      title: Interval Backup Schedule
+      type: object
+      description: Hours between starts when using INTERVAL schedule type.
+      properties:
+        hours_between_backups:
+          title: Hours Between Backups
+          description: Time interval in hours between two consecutive automated backups
+          type: integer
+          minimum: 6
+          maximum: 720
+          default: 168
+
+    BackupTriggerType:
+      title: Backup Trigger Type
+      type: string
+      enum:
+        - MANUAL
+        - SCHEDULER
+        - AUTOMATIC
+      description: Whether the backup was started manually or by automation.
+
+    BackupType:
+      title: Backup Type
+      type: string
+      enum:
+        - FULL_BACKUP
+      description: Backup scope; FULL_BACKUP is the supported type for this API.
+
+    BackupAction:
+      title: Backup Action
+      type: string
+      enum:
+        - BACKUP
+      description: Must be BACKUP for starting a backup job.
+
+    RestoreAction:
+      title: Restore Action
+      type: string
+      enum:
+        - RESTORE
+      description: Must be RESTORE for starting a restore job.
+
+    BackupRequest:
+      title: Start Backup Request
+      type: object
+      additionalProperties: false
+      description: Body for POST /sspi/backup; requires backup_type and action BACKUP.
+      required:
+        - backup_type
+        - action
+      properties:
+        id:
+          title: Id
+          type: string
+          description: Unique id for backup
+        name:
+          title: Name
+          type: string
+          description: Backup name
+          maxLength: 255
+        description:
+          title: Description
+          type: string
+          description: Backup description
+          maxLength: 255
+        backup_type:
+          $ref: '#/components/schemas/BackupType'
+          description: Backup type for what to take in backup
+        action:
+          $ref: '#/components/schemas/BackupAction'
+          description: Type of backup action
+
+    BackupRestoreStatus:
+      title: Backup/Restore Status
+      type: string
+      enum:
+        - SUCCESS
+        - FAILED
+        - IN_PROGRESS
+        - QUEUED
+        - NOT_STARTED
+        - COMPLETED_WITH_ERRORS
+      description: Lifecycle state of a backup or restore job.
+
+    BackupStatus:
+      title: Backup job status
+      description: Progress, timestamps, version, and per-entity results for one backup job.
+      allOf:
+        - $ref: '#/components/schemas/Resource'
+        - type: object
+          required:
+            - id
+            - backup_type
+            - backup_trigger_type
+            - status
+            - version
+            - error_messages
+            - no_of_entities
+            - entities_status
+          properties:
+            backup_start_time:
+              $ref: '#/components/schemas/EpochMsTimestamp'
+              description: Milliseconds since Unix epoch when the backup started (EpochMsTimestamp).
+              readOnly: true
+            backup_end_time:
+              $ref: '#/components/schemas/EpochMsTimestamp'
+              description: Milliseconds since Unix epoch when the backup completed (EpochMsTimestamp).
+              readOnly: true
+            progress:
+              title: Progress
+              type: integer
+              description: Backup progress, expressed as a percentage from 0 to 100, inclusive
+              readOnly: true
+            progress_message:
+              title: Progress Message
+              type: string
+              description: Backup progress message
+              readOnly: true
+            backup_type:
+              $ref: '#/components/schemas/BackupType'
+            backup_trigger_type:
+              $ref: '#/components/schemas/BackupTriggerType'
+              readOnly: true
+            status:
+              $ref: '#/components/schemas/BackupRestoreStatus'
+              readOnly: true
+            file_size:
+              title: File Size
+              type: integer
+              description: Backup file size
+              readOnly: true
+            version:
+              title: Version
+              type: string
+              description: Deployed version this backup is taken
+              readOnly: true
+            error_messages:
+              title: Error Messages
+              type: array
+              description: List of error messages encountered during backup operation
+              items:
+                type: string
+              readOnly: true
+            no_of_entities:
+              title: No Of Entities
+              description: number of managed entities
+              type: integer
+              format: int32
+              readOnly: true
+            entities_status:
+              title: Entities Status
+              type: array
+              description: Status of backup operation for each managed entity
+              items:
+                $ref: '#/components/schemas/BackupRestoreManagedEntityStatus'
+              readOnly: true
+
+    BackupStatusList:
+      title: Backup Status List
+      description: |
+        Paginated list of backup jobs (see ListResult for paging fields).
+      allOf:
+        - $ref: '#/components/schemas/ListResult'
+        - type: object
+          required:
+            - result
+          properties:
+            result:
+              title: Result
+              type: array
+              description: List of backup status records
+              items:
+                $ref: '#/components/schemas/BackupStatus'
+              readOnly: true
+
+    RestoreRequest:
+      title: Start Restore Request Common
+      type: object
+      additionalProperties: false
+      description: Body for POST /sspi/restore; requires backup_id and action RESTORE.
+      required:
+        - backup_id
+        - action
+      properties:
+        id:
+          title: Id
+          type: string
+          description: Unique id of restore
+        name:
+          title: Name
+          type: string
+          description: Backup name
+          maxLength: 255
+        description:
+          title: Description
+          type: string
+          description: Backup description
+          maxLength: 255
+        backup_id:
+          title: Backup Id
+          type: string
+          description: Unique id of successful backup
+        force_restore:
+          title: Force Restore
+          type: boolean
+          default: false
+          description: |-
+            Bypasses validation pre-checks during the restore operation. If true, the
+            system ignores recoverable errors that would otherwise block the restore
+        action:
+          $ref: '#/components/schemas/RestoreAction'
+
+    RestoreStatus:
+      title: Restore job status
+      description: Progress, timestamps, source backup reference, and per-entity results for one restore job.
+      allOf:
+        - $ref: '#/components/schemas/Resource'
+        - type: object
+          required:
+            - id
+            - backup_id
+            - backup_start_time
+            - status
+            - version
+            - error_messages
+            - no_of_entities
+            - entities_status
+          properties:
+            backup_id:
+              title: Backup Id
+              type: string
+              description: Unique id of backup
+              readOnly: true
+            backup_name:
+              title: Backup Name
+              type: string
+              description: Backup name
+              readOnly: true
+            backup_start_time:
+              $ref: '#/components/schemas/EpochMsTimestamp'
+              description: Milliseconds since Unix epoch when the source backup started (EpochMsTimestamp).
+              readOnly: true
+            restore_start_time:
+              $ref: '#/components/schemas/EpochMsTimestamp'
+              description: Milliseconds since Unix epoch when the restore started (EpochMsTimestamp).
+              readOnly: true
+            restore_end_time:
+              $ref: '#/components/schemas/EpochMsTimestamp'
+              description: Milliseconds since Unix epoch when the restore completed (EpochMsTimestamp).
+              readOnly: true
+            progress:
+              title: Progress
+              type: integer
+              description: Restore progress, expressed as a percentage from 0 to 100, inclusive
+              readOnly: true
+            progress_message:
+              title: Progress Message
+              type: string
+              description: Restore progress message
+              readOnly: true
+            status:
+              $ref: '#/components/schemas/BackupRestoreStatus'
+              description: Status of restore request
+              readOnly: true
+            version:
+              title: Version
+              type: string
+              description: Deployed version of the backup used in this restore
+              readOnly: true
+            error_messages:
+              title: Error Messages
+              type: array
+              description: List of error messages encountered during restore operation
+              items:
+                type: string
+              readOnly: true
+            no_of_entities:
+              title: No Of Entities
+              description: number of managed entities
+              type: integer
+              format: int32
+              readOnly: true
+            entities_status:
+              title: Entities Status
+              type: array
+              description: Status of restore operation for each managed entity
+              items:
+                $ref: '#/components/schemas/BackupRestoreManagedEntityStatus'
+              readOnly: true
+            backup_location:
+              title: Backup Location
+              type: string
+              description: Directory in backup server where the backup was stored
+              readOnly: true
+            server_address:
+              title: Server Address
+              type: string
+              description: FQDN or IP address of the backup server
+              readOnly: true
+
+    RestoreStatusList:
+      title: Restore Status List
+      description: |
+        Paginated list of restore jobs (see ListResult for paging fields).
+      allOf:
+        - $ref: '#/components/schemas/ListResult'
+        - type: object
+          required:
+            - result
+          properties:
+            result:
+              title: Result
+              type: array
+              description: List of restore status records
+              items:
+                $ref: '#/components/schemas/RestoreStatus'
+              readOnly: true
+
+    BackupHistoryType:
+      title: Backup/Restore History Type
+      type: string
+      enum:
+        - DB
+        - SERVER
+      description: DB reads job history from the database; SERVER reconciles with the remote backup server view.
+
+    BackupDetails:
+      title: Extended backup metadata
+      description: Snapshot of backup identity, trigger, version, and SSP instance details at backup time.
+      type: object
+      properties:
+        backup_id:
+          title: Backup ID
+          type: string
+          description: Unique id of backup
+        description:
+          title: Description
+          type: string
+          description: Backup description
+        trigger_type:
+          title: Trigger Type
+          type: string
+          description: Backup triggered type
+        version:
+          title: Version
+          type: string
+          description: Deployed version of SSPI
+        instancesDetails:
+          title: Instances Details
+          description: |
+            Details of SSP instances deployed by this SSPI at the time
+            the backup was taken
+          type: array
+          items:
+            $ref: "#/components/schemas/SspDetails"
+
+    SspDetails:
+      title: SSP instance details at backup time
+      description: |
+        One SSP instance as deployed when the backup was taken (names, versions, pools, endpoints).
+      type: object
+      properties:
+        instance:
+          title: Instance
+          type: string
+          description: SSP instance name
+        atp_version:
+          title: ATP Version
+          type: string
+          description: Deployed version of SSP
+        form_factor:
+          title: Form Factor
+          $ref: '#/components/schemas/FormFactor'
+        controller_count:
+          title: Controller Count
+          type: integer
+          description: Number of controller nodes
+        worker_count:
+          title: Worker Count
+          type: integer
+          description: Number of worker nodes
+        node_pool:
+          title: Node Pool
+          description: node ip pools
+          type: array
+          items:
+            $ref: "#/components/schemas/IpPool"
+        service_pool:
+          title: Service Pool
+          description: service ip pools
+          type: array
+          items:
+            $ref: "#/components/schemas/IpPool"
+        ingress_fqdn:
+          title: Ingress FQDN
+          description: FQDN of security service platform
+          type: string
+        kafka_fqdn:
+          title: Kafka FQDN
+          description: FQDN of the kafka running in security service platform
+          type: string
+
+    BackupRestoreManagedEntityStatus:
+      title: Managed entity backup or restore outcome
+      description: Per-component status and errors for one entity in a backup or restore job.
+      type: object
+      required:
+        - id
+        - name
+        - form_factor
+        - status
+        - error_messages
+      properties:
+        id:
+          title: ID
+          type: string
+          description: Unique managed entity ID
+        name:
+          title: Name
+          type: string
+          description: Unique entity name
+        form_factor:
+          $ref: '#/components/schemas/FormFactor'
+        status:
+          title: Status
+          $ref: '#/components/schemas/BackupRestoreStatus'
+        error_messages:
+          title: Error Messages
+          type: array
+          description: Error messages pertaining to backup operation on this endpoint
+          items:
+            type: string
