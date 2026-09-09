@@ -7,6 +7,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
@@ -91,14 +92,16 @@ func (r *BackupConfigResource) Schema(ctx context.Context, req resource.SchemaRe
 				Required:            true,
 				Sensitive:           true,
 				MarkdownDescription: "Password for SSH authentication to the backup server (6–255 chars). Write-only.",
+				Validators:          []validator.String{stringvalidator.LengthBetween(6, 255)},
 			},
 			"passphrase": schema.StringAttribute{
 				Required:  true,
 				Sensitive: true,
-				MarkdownDescription: "Passphrase to encrypt backup bundles (6–255 chars). Write-only. " +
+				MarkdownDescription: "Passphrase to encrypt backup bundles (12–255 chars). Write-only. " +
 					"Marked optional in `apis/ssp_public_apis.yaml`'s `BackupConfig` schema, but the live " +
 					"`PUT /ssp/backup/config` API rejects requests with an empty passphrase " +
 					"(`\"Passphrase can not be empty.\"`) — required here to match observed live behavior.",
+				Validators: []validator.String{stringvalidator.LengthBetween(12, 255)},
 			},
 		},
 	}

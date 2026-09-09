@@ -28,5 +28,7 @@ Corresponds to `GET/PUT /ssp/lcm/ndr/config`.
 
 ### Read-Only
 
+- `config_message` (String) Informational message accompanying `config_status`.
+- `config_status` (String) Configuration status from the platform. One of `NOT_CONFIGURED`, `DEPLOYMENT_REQUIRED`, or `CONFIGURATION_APPLIED`.
 - `id` (String) Always `singleton` for this resource.
 - `revision` (Number) Revision number maintained by the SSP backend.

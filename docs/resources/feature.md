@@ -9,9 +9,9 @@ description: |-
   at a time; concurrent ssp_feature/ssp_site resources within the same
   terraform apply are serialised by the provider.
   Supported features: MALWARE_PREVENTION, INTELLIGENCE, NDR, BAREMETAL_SECURITY,
-  RULE_ANALYSIS, INTELLIGENT_ASSIST_PLATFORM, INTELLIGENT_ASSIST_THREAT_DEFENSE,
+  RULE_ANALYSIS, AI_ASSISTANT_PLATFORM, AI_ASSISTANT_THREAT_DEFENSE,
   MALWARE_ANALYSIS_VC, SPAC, NETWORK_TRAFFIC_ANALYSIS, UPGRADE_COORDINATOR,
-  CLOUD_CONNECTOR.
+  CLOUD_CONNECTOR, METRICS.
   Corresponds to GET/PUT /ssp/lcm/features/{feature} and
   GET /ssp/lcm/features/{feature}/status.
 ---
@@ -26,9 +26,9 @@ at a time; concurrent `ssp_feature`/`ssp_site` resources within the same
 `terraform apply` are serialised by the provider.
 
 Supported features: `MALWARE_PREVENTION`, `INTELLIGENCE`, `NDR`, `BAREMETAL_SECURITY`,
-`RULE_ANALYSIS`, `INTELLIGENT_ASSIST_PLATFORM`, `INTELLIGENT_ASSIST_THREAT_DEFENSE`,
+`RULE_ANALYSIS`, `AI_ASSISTANT_PLATFORM`, `AI_ASSISTANT_THREAT_DEFENSE`,
 `MALWARE_ANALYSIS_VC`, `SPAC`, `NETWORK_TRAFFIC_ANALYSIS`, `UPGRADE_COORDINATOR`,
-`CLOUD_CONNECTOR`.
+`CLOUD_CONNECTOR`, `METRICS`.
 
 Corresponds to `GET/PUT /ssp/lcm/features/{feature}` and
 `GET /ssp/lcm/features/{feature}/status`.
@@ -39,6 +39,10 @@ Corresponds to `GET/PUT /ssp/lcm/features/{feature}` and
 ### Required
 
 - `feature` (String) Name of the feature to deploy (case-sensitive).
+
+### Optional
+
+- `force_undeploy` (Boolean) When `true`, `Delete` issues `action=FORCE_UNDEPLOY` instead of `action=UNDEPLOY`, overriding a dependent-feature block that would otherwise fail a plain undeploy. Defaults to `false`.
 
 ### Read-Only
 

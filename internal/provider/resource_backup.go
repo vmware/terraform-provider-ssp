@@ -5,8 +5,10 @@ package provider
 
 import (
 	"context"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -29,13 +31,16 @@ type BackupResource struct {
 
 // BackupResourceModel is the Terraform state model for on-demand backup.
 type BackupResourceModel struct {
-	ID          types.String `tfsdk:"id"`
-	BackupType  types.String `tfsdk:"backup_type"`
-	Action      types.String `tfsdk:"action"`
-	Name        types.String `tfsdk:"name"`
-	Description types.String `tfsdk:"description"`
-	Status      types.String `tfsdk:"status"`
-	Progress    types.Int64  `tfsdk:"progress"`
+	ID            types.String `tfsdk:"id"`
+	BackupType    types.String `tfsdk:"backup_type"`
+	Action        types.String `tfsdk:"action"`
+	Name          types.String `tfsdk:"name"`
+	Description   types.String `tfsdk:"description"`
+	Status        types.String `tfsdk:"status"`
+	Progress      types.Int64  `tfsdk:"progress"`
+	FileSize      types.Int64  `tfsdk:"file_size"`
+	NoOfEntities  types.Int64  `tfsdk:"no_of_entities"`
+	ErrorMessages types.List   `tfsdk:"error_messages"`
 }
 
 func (r *BackupResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -87,6 +92,19 @@ func (r *BackupResource) Schema(ctx context.Context, req resource.SchemaRequest,
 			"progress": schema.Int64Attribute{
 				Computed:            true,
 				MarkdownDescription: "Percentage progress of the backup operation.",
+			},
+			"file_size": schema.Int64Attribute{
+				Computed:            true,
+				MarkdownDescription: "Size in bytes of the completed backup file.",
+			},
+			"no_of_entities": schema.Int64Attribute{
+				Computed:            true,
+				MarkdownDescription: "Number of managed entities included in the backup.",
+			},
+			"error_messages": schema.ListAttribute{
+				Computed:            true,
+				ElementType:         types.StringType,
+				MarkdownDescription: "Error messages encountered during the backup operation, if any.",
 			},
 		},
 	}
@@ -146,12 +164,14 @@ func (r *BackupResource) Create(ctx context.Context, req resource.CreateRequest,
 
 	status, waitErr := r.client.WaitForBackupComplete(ctx, backupID)
 	if status != nil {
-		data.Status = types.StringValue(status.Status)
-		data.Progress = types.Int64Value(int64(status.Progress))
+		resp.Diagnostics.Append(mapBackupStatusToState(ctx, status, &data)...)
 	} else {
 		// The API already accepted and started this job (backupID is real)
 		// even though the poll below didn't observe a terminal status.
 		data.Status = types.StringValue("IN_PROGRESS")
+		data.FileSize = types.Int64Value(0)
+		data.NoOfEntities = types.Int64Value(0)
+		data.ErrorMessages = types.ListNull(types.StringType)
 	}
 
 	// Persist state now, regardless of the poll outcome: the backup job was
@@ -159,7 +179,11 @@ func (r *BackupResource) Create(ctx context.Context, req resource.CreateRequest,
 	// cause the next apply to POST a second, duplicate/orphaned backup job.
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 	if waitErr != nil {
-		resp.Diagnostics.AddError("Backup operation failed", waitErr.Error())
+		errMsg := waitErr.Error()
+		if status != nil && len(status.ErrorMessages) > 0 {
+			errMsg += ": " + strings.Join(status.ErrorMessages, "; ")
+		}
+		resp.Diagnostics.AddError("Backup operation failed", errMsg)
 	}
 }
 
@@ -181,13 +205,28 @@ func (r *BackupResource) Read(ctx context.Context, req resource.ReadRequest, res
 		return
 	}
 
-	data.Status = types.StringValue(status.Status)
-	data.Progress = types.Int64Value(int64(status.Progress))
+	resp.Diagnostics.Append(mapBackupStatusToState(ctx, &status, &data)...)
 	if status.BackupType != "" {
 		data.BackupType = types.StringValue(status.BackupType)
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+}
+
+// mapBackupStatusToState maps a client.BackupStatus onto the Terraform
+// model's status/progress/file_size/no_of_entities/error_messages attributes.
+func mapBackupStatusToState(ctx context.Context, status *client.BackupStatus, data *BackupResourceModel) diag.Diagnostics {
+	var diags diag.Diagnostics
+	data.Status = types.StringValue(status.Status)
+	data.Progress = types.Int64Value(int64(status.Progress))
+	data.FileSize = types.Int64Value(status.FileSize)
+	data.NoOfEntities = types.Int64Value(int64(status.NoOfEntities))
+
+	errMsgs, d := types.ListValueFrom(ctx, types.StringType, status.ErrorMessages)
+	diags.Append(d...)
+	data.ErrorMessages = errMsgs
+
+	return diags
 }
 
 func (r *BackupResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {

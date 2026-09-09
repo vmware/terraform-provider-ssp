@@ -27,10 +27,13 @@ Corresponds to `GET /ssp/licensing-client/licenses`.
 Read-Only:
 
 - `expiration_date` (Number) License expiration as Unix epoch in milliseconds.
+- `expiry_date_with_grace_period` (Number) License expiration including any grace period, as Unix epoch in milliseconds.
 - `license_id` (String) License key / ID.
+- `license_type` (String) Type of license (`DLF`, `V2`, `KEYLESS`, `SUBSCRIPTION`, `EVAL`).
 - `product_display_name` (String) Human-readable product name.
 - `product_family` (String) Product family (e.g. FIREWALL WITH ATP).
 - `quantity` (Number) Licensed quantity.
 - `sku_code` (String) SKU code for the license.
 - `source` (String) License source (e.g. VDLS).
+- `source_id` (String) ID of the onboarded NSX Manager, AVI controller, or Licensing Service this license came from.
 - `unit_of_measure` (String) Unit of measure for the quantity (e.g. Core).

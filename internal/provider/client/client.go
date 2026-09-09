@@ -11,7 +11,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -139,15 +142,18 @@ type BackupStatusList struct {
 
 // BackupStatus summarises a single backup job.
 type BackupStatus struct {
-	ID                string `json:"id"`
-	Status            string `json:"status"`
-	BackupType        string `json:"backup_type"`
-	BackupTriggerType string `json:"backup_trigger_type,omitempty"`
-	BackupStartTime   int64  `json:"backup_start_time,omitempty"`
-	BackupEndTime     int64  `json:"backup_end_time,omitempty"`
-	Progress          int    `json:"progress,omitempty"`
-	ProgressMessage   string `json:"progress_message,omitempty"`
-	Version           string `json:"version,omitempty"`
+	ID                string   `json:"id"`
+	Status            string   `json:"status"`
+	BackupType        string   `json:"backup_type"`
+	BackupTriggerType string   `json:"backup_trigger_type,omitempty"`
+	BackupStartTime   int64    `json:"backup_start_time,omitempty"`
+	BackupEndTime     int64    `json:"backup_end_time,omitempty"`
+	Progress          int      `json:"progress,omitempty"`
+	ProgressMessage   string   `json:"progress_message,omitempty"`
+	Version           string   `json:"version,omitempty"`
+	FileSize          int64    `json:"file_size,omitempty"`
+	ErrorMessages     []string `json:"error_messages,omitempty"`
+	NoOfEntities      int      `json:"no_of_entities,omitempty"`
 }
 
 // BackupRequest represents a request to trigger an on-demand backup.
@@ -177,6 +183,7 @@ type RestoreStatus struct {
 	Progress        int      `json:"progress,omitempty"`
 	ProgressMessage string   `json:"progress_message,omitempty"`
 	ErrorMessages   []string `json:"error_messages,omitempty"`
+	NoOfEntities    int      `json:"no_of_entities,omitempty"`
 }
 
 // ── Sites ──────────────────────────────────────────────────────────────────────
@@ -340,12 +347,23 @@ type UpgradeHistoryList struct {
 
 // ClusterStatus is the response from GET /ssp/cluster/monitor/platform/status.
 type ClusterStatus struct {
-	ClusterID      string `json:"cluster_id,omitempty"`
-	ClusterName    string `json:"cluster_name,omitempty"`
-	ProductVersion string `json:"product_version,omitempty"`
-	NodeCount      int    `json:"node_count,omitempty"`
-	FormFactor     string `json:"form_factor,omitempty"`
-	Health         string `json:"health,omitempty"`
+	ClusterID          string       `json:"cluster_id,omitempty"`
+	ClusterName        string       `json:"cluster_name,omitempty"`
+	ProductVersion     string       `json:"product_version,omitempty"`
+	NodeCount          int          `json:"node_count,omitempty"`
+	FormFactor         string       `json:"form_factor,omitempty"`
+	Health             string       `json:"health,omitempty"`
+	MessageBusEndpoint string       `json:"message_bus_endpoint,omitempty"`
+	K8sVersion         string       `json:"k8s_version,omitempty"`
+	IngressURL         string       `json:"ingress_url,omitempty"`
+	NetworkDataFlow    *NetworkData `json:"network_data_flow,omitempty"`
+}
+
+// NetworkData holds network transmit/receive/total rate statistics.
+type NetworkData struct {
+	Transmit float64 `json:"transmit,omitempty"`
+	Receive  float64 `json:"receive,omitempty"`
+	Total    float64 `json:"total,omitempty"`
 }
 
 // FeatureHealthResponse is the response from GET /ssp/cluster/monitor/feature/health.
@@ -370,14 +388,17 @@ type LicenseList struct {
 
 // License holds the details of one SSP license.
 type License struct {
-	LicenseID          string `json:"license_id,omitempty"`
-	ProductDisplayName string `json:"product_display_name,omitempty"`
-	ProductFamily      string `json:"product_family,omitempty"`
-	Quantity           int    `json:"quantity,omitempty"`
-	UnitOfMeasure      string `json:"unit_of_measure,omitempty"`
-	Source             string `json:"source,omitempty"`
-	SkuCode            string `json:"sku_code,omitempty"`
-	ExpirationDate     int64  `json:"expiration_date,omitempty"`
+	LicenseID                 string `json:"license_id,omitempty"`
+	LicenseType               string `json:"license_type,omitempty"`
+	ProductDisplayName        string `json:"product_display_name,omitempty"`
+	ProductFamily             string `json:"product_family,omitempty"`
+	Quantity                  int    `json:"quantity,omitempty"`
+	UnitOfMeasure             string `json:"unit_of_measure,omitempty"`
+	Source                    string `json:"source,omitempty"`
+	SourceID                  string `json:"source_id,omitempty"`
+	SkuCode                   string `json:"sku_code,omitempty"`
+	ExpirationDate            int64  `json:"expiration_date,omitempty"`
+	ExpiryDateWithGracePeriod int64  `json:"expiry_date_with_grace_period,omitempty"`
 }
 
 // NdrConfiguration is used for GET and PUT /ssp/lcm/ndr/config.
@@ -414,6 +435,295 @@ type AvailableCloudConnectorRegions struct {
 type CloudConnectorConfigurationStatus struct {
 	Status  string `json:"status"`
 	Message string `json:"message"`
+}
+
+// ── Restore status list ──────────────────────────────────────────────────────
+
+// RestoreStatusList is the response from GET /ssp/restore/status.
+type RestoreStatusList struct {
+	Results          []RestoreStatus `json:"results"`
+	TotalResultCount int             `json:"total_result_count"`
+}
+
+// ── Services monitor status ──────────────────────────────────────────────────
+
+// ServiceStatusList is the response from GET /ssp/cluster/monitor/services/status.
+type ServiceStatusList struct {
+	Data             []ServiceStatus `json:"data"`
+	MessagingService *MessagingData  `json:"messaging_service,omitempty"`
+}
+
+// ServiceStatus is the health/utilization status of one platform service category.
+type ServiceStatus struct {
+	ServiceName string `json:"service_name"`
+	Health      string `json:"health,omitempty"`
+}
+
+// MessagingData holds status/metrics for the platform messaging service.
+type MessagingData struct {
+	Status string `json:"status,omitempty"`
+}
+
+// ── Telemetry data export ─────────────────────────────────────────────────────
+
+// TelemetryData is a thin wrapper for the CSV payload returned by
+// GET /ssp/telemetry/data.
+type TelemetryData struct {
+	CSV string
+}
+
+// ── Site feature settings ─────────────────────────────────────────────────────
+
+// SiteFeatureSettings is used for GET/PUT /ssp/sites/{site-id}/settings.
+type SiteFeatureSettings struct {
+	ID                    string   `json:"id,omitempty"`
+	Revision              int      `json:"_revision"`
+	SiteIDs               []string `json:"site_ids,omitempty"`
+	IsIntelligenceEnabled bool     `json:"is_intelligence_enabled"`
+	IsMetricsEnabled      bool     `json:"is_metrics_enabled"`
+	IsMpsEnabled          bool     `json:"is_mps_enabled"`
+	IsNdrEnabled          bool     `json:"is_ndr_enabled"`
+	IsRuleAnalysisEnabled bool     `json:"is_rule_analysis_enabled"`
+}
+
+// ── Intelligence configuration ────────────────────────────────────────────────
+
+// IntelligenceConfiguration is used for GET and PUT /ssp/lcm/intelligence/config.
+type IntelligenceConfiguration struct {
+	Revision               int  `json:"_revision"`
+	EnableAdvancedFeatures bool `json:"enable_advanced_features"`
+}
+
+// IntelligenceConfigurationStatus is returned by
+// GET /ssp/lcm/intelligence/config/status.
+type IntelligenceConfigurationStatus struct {
+	Status  string `json:"status"`
+	Message string `json:"message"`
+}
+
+// ── Malware Analysis VC configuration ─────────────────────────────────────────
+
+// MalwareAnalysisVcConfiguration is used for GET and PUT
+// /ssp/lcm/malware-analysis-vc/config.
+type MalwareAnalysisVcConfiguration struct {
+	Revision       int                             `json:"_revision"`
+	Server         string                          `json:"server,omitempty"`
+	Datacenter     string                          `json:"datacenter,omitempty"`
+	Cluster        string                          `json:"cluster,omitempty"`
+	Datastore      string                          `json:"datastore,omitempty"`
+	ContentLibrary string                          `json:"content_library,omitempty"`
+	Network        *MalwareAnalysisVcNetworkParams `json:"network,omitempty"`
+}
+
+// MalwareAnalysisVcNetworkParams holds the vCenter network parameters for
+// Malware Analysis VC's on-premise sandbox gateway VM.
+type MalwareAnalysisVcNetworkParams struct {
+	GatewayVMUseDHCP         *bool  `json:"gateway_vm_use_dhcp,omitempty"`
+	GatewayVMMgmtNetworkName string `json:"gateway_vm_mgmt_network_name,omitempty"`
+	GatewayVMMgmtNetworkMask string `json:"gateway_vm_mgmt_network_mask,omitempty"`
+	GatewayVMIPAddress       string `json:"gateway_vm_ip_address,omitempty"`
+	GatewayVMIPv4Gateway     string `json:"gateway_vm_ipv4_gateway,omitempty"`
+	GatewayVMUseSspNtpAndDNS *bool  `json:"gateway_vm_use_ssp_ntp_and_dns,omitempty"`
+	SspNtpServerIPAddress    string `json:"ssp_ntp_server_ip_address,omitempty"`
+	SspDNSServerIPAddress    string `json:"ssp_dns_server_ip_address,omitempty"`
+	SandboxVMNetworkName     string `json:"sandbox_vm_network_name,omitempty"`
+}
+
+// MalwareAnalysisVcConfigurationStatus is returned by
+// GET /ssp/lcm/malware-analysis-vc/config/status.
+type MalwareAnalysisVcConfigurationStatus struct {
+	Status  string `json:"status"`
+	Message string `json:"message"`
+}
+
+// ── Security Content service ──────────────────────────────────────────────────
+
+// SecurityContentConfig is used for GET and PUT /ssp/security-content/config.
+type SecurityContentConfig struct {
+	ID                         string `json:"id,omitempty"`
+	Revision                   int    `json:"_revision"`
+	ConnectivityMode           string `json:"connectivity_mode"`
+	ConnectivityModeChangeable *bool  `json:"connectivity_mode_changeable,omitempty"`
+}
+
+// SiteIdpsConfig is used for GET/PUT/POST/DELETE
+// /ssp/security-content/feature-config/idps/{site-id}.
+type SiteIdpsConfig struct {
+	ID              string `json:"id,omitempty"`
+	Revision        int    `json:"_revision"`
+	SiteID          string `json:"site_id"`
+	AssignedVersion string `json:"assigned_version,omitempty"`
+	AutoUpdate      bool   `json:"auto_update"`
+}
+
+// FeatureVersionListResult is the response from
+// GET /ssp/security-content/feature-versions.
+type FeatureVersionListResult struct {
+	TotalResultCount int                  `json:"total_result_count"`
+	Results          []FeatureVersionInfo `json:"results"`
+}
+
+// FeatureVersionInfo lists the versions available for one security-content
+// feature type (e.g. GEO_IP, IDPS_SIGNATURE, IP_REPUTATION, URL_DB).
+type FeatureVersionInfo struct {
+	FeatureType string   `json:"feature_type"`
+	Versions    []string `json:"versions"`
+}
+
+// FeatureDownloadInfo is the response from
+// GET /ssp/security-content/feature-download-info.
+type FeatureDownloadInfo struct {
+	Version  string                `json:"version"`
+	Contents []FeatureDownloadFile `json:"contents"`
+}
+
+// FeatureDownloadFile describes one downloadable file within a feature version.
+type FeatureDownloadFile struct {
+	Name           string `json:"name"`
+	Sha256Checksum string `json:"sha256_checksum"`
+	DownloadURL    string `json:"download_url"`
+}
+
+// MegaBundle describes one uploaded security-content mega bundle.
+type MegaBundle struct {
+	ID                 string `json:"id,omitempty"`
+	BundleID           string `json:"bundle_id,omitempty"`
+	BundleType         string `json:"bundle_type,omitempty"`
+	Source             string `json:"source,omitempty"`
+	UploadStatus       string `json:"upload_status,omitempty"`
+	StatusMessage      string `json:"status_message,omitempty"`
+	ManifestVersion    string `json:"manifest_version,omitempty"`
+	SspVersion         string `json:"ssp_version,omitempty"`
+	BundleCreationTime int64  `json:"bundle_creation_time,omitempty"`
+}
+
+// MegaBundleListResult is the response from GET /ssp/security-content/bundles.
+type MegaBundleListResult struct {
+	TotalResultCount int          `json:"total_result_count"`
+	Results          []MegaBundle `json:"results"`
+}
+
+// ── Alarms ─────────────────────────────────────────────────────────────────────
+
+// AlarmDefinition describes the configuration of one alarm type.
+type AlarmDefinition struct {
+	ID                           string `json:"id,omitempty"`
+	FeatureName                  string `json:"feature_name,omitempty"`
+	FeatureDisplayName           string `json:"feature_display_name,omitempty"`
+	EventType                    string `json:"event_type,omitempty"`
+	EventTypeDisplayName         string `json:"event_type_display_name,omitempty"`
+	Severity                     string `json:"severity,omitempty"`
+	Summary                      string `json:"summary,omitempty"`
+	Description                  string `json:"description,omitempty"`
+	DescriptionOnResolve         string `json:"description_on_resolve,omitempty"`
+	RecommendedAction            string `json:"recommended_action,omitempty"`
+	KbArticle                    string `json:"kb_article,omitempty"`
+	ReleaseIntroduced            string `json:"release_introduced,omitempty"`
+	EventResourceType            string `json:"event_resource_type,omitempty"`
+	EventResourceTypeDisplayName string `json:"event_resource_type_display_name,omitempty"`
+	Enabled                      bool   `json:"enabled"`
+}
+
+// AlarmDefinitionListResult is the response from
+// POST /ssp/alarms/definitions (a filtered list, despite the verb).
+type AlarmDefinitionListResult struct {
+	TotalResultCount int               `json:"total_result_count"`
+	Results          []AlarmDefinition `json:"results"`
+}
+
+// AlarmDefinitionFilterRequest filters POST /ssp/alarms/definitions.
+type AlarmDefinitionFilterRequest struct {
+	FeatureNames []string `json:"feature_names,omitempty"`
+	Severities   []string `json:"severities,omitempty"`
+	EventTypes   []string `json:"event_types,omitempty"`
+	Enabled      *bool    `json:"enabled,omitempty"`
+}
+
+// UpdateAlarmDefinitionRequest is the body for
+// POST /ssp/alarms/definitions/{id} (updates only the enabled flag).
+type UpdateAlarmDefinitionRequest struct {
+	Enabled bool `json:"enabled"`
+}
+
+// AlarmInstance is a single active or historical alarm.
+type AlarmInstance struct {
+	ID                           string `json:"id,omitempty"`
+	DefinitionID                 string `json:"definition_id,omitempty"`
+	FeatureName                  string `json:"feature_name,omitempty"`
+	FeatureDisplayName           string `json:"feature_display_name,omitempty"`
+	EventType                    string `json:"event_type,omitempty"`
+	EventTypeDisplayName         string `json:"event_type_display_name,omitempty"`
+	Summary                      string `json:"summary,omitempty"`
+	Severity                     string `json:"severity,omitempty"`
+	Description                  string `json:"description,omitempty"`
+	RecommendedAction            string `json:"recommended_action,omitempty"`
+	KbArticle                    string `json:"kb_article,omitempty"`
+	EventResourceType            string `json:"event_resource_type,omitempty"`
+	EventResourceTypeDisplayName string `json:"event_resource_type_display_name,omitempty"`
+	ResourceID                   string `json:"resource_id,omitempty"`
+	ObjectID                     string `json:"object_id,omitempty"`
+	NodeID                       string `json:"node_id,omitempty"`
+	Value                        string `json:"value,omitempty"`
+	State                        string `json:"state,omitempty"`
+	SuppressDuration             int    `json:"suppress_duration,omitempty"`
+}
+
+// AlarmInstanceListResult is the response from POST /ssp/alarms.
+type AlarmInstanceListResult struct {
+	TotalResultCount int             `json:"total_result_count"`
+	Results          []AlarmInstance `json:"results"`
+}
+
+// AlarmInstanceFilterRequest filters POST /ssp/alarms.
+type AlarmInstanceFilterRequest struct {
+	FeatureNames []string `json:"feature_names,omitempty"`
+	Severities   []string `json:"severities,omitempty"`
+	States       []string `json:"states,omitempty"`
+}
+
+// UpdateAlarmInstancesRequest is the body for POST /ssp/alarms/states.
+type UpdateAlarmInstancesRequest struct {
+	Instances []string `json:"instances"`
+}
+
+// AlarmInstanceCountFilterRequest filters POST /ssp/alarms/counts.
+type AlarmInstanceCountFilterRequest struct {
+	FeatureNames []string `json:"feature_names,omitempty"`
+}
+
+// AlarmCounts is the response from POST /ssp/alarms/counts: alarm instance
+// counts for each lifecycle state, each grouped by category (e.g. feature
+// name) and then by severity.
+type AlarmCounts struct {
+	OpenInstanceCounts         []AlarmGroupedCounts `json:"open_instance_counts,omitempty"`
+	SuppressedInstanceCounts   []AlarmGroupedCounts `json:"suppressed_instance_counts,omitempty"`
+	ResolvedInstanceCounts     []AlarmGroupedCounts `json:"resolved_instance_counts,omitempty"`
+	AcknowledgedInstanceCounts []AlarmGroupedCounts `json:"acknowledged_instance_counts,omitempty"`
+	TotalInstanceCount         int64                `json:"total_instance_count,omitempty"`
+}
+
+// AlarmGroupedCounts groups alarm severity counts by category for one
+// alarm lifecycle state.
+type AlarmGroupedCounts struct {
+	Categories []SeverityCountsByCategory `json:"categories,omitempty"`
+}
+
+// SeverityCountsByCategory holds the severity breakdown for one category
+// (typically a feature name).
+type SeverityCountsByCategory struct {
+	Category       string          `json:"category,omitempty"`
+	SeverityCounts *SeverityCounts `json:"severity_counts,omitempty"`
+}
+
+// SeverityCounts holds a list of per-severity instance counts.
+type SeverityCounts struct {
+	SeverityCounts []SeverityCountEntry `json:"severity_counts,omitempty"`
+}
+
+// SeverityCountEntry maps one severity level to its alarm instance count.
+type SeverityCountEntry struct {
+	Severity string `json:"severity,omitempty"`
+	Count    int64  `json:"count,omitempty"`
 }
 
 // ── Malware Prevention configuration ─────────────────────────────────────────
@@ -620,7 +930,19 @@ func (c *Client) WaitForSiteReady(ctx context.Context, siteID string) error {
 			if site.Status != nil && site.Status.ConnectionStatus == "HEALTHY" {
 				return nil
 			}
-			// Unhealthy is not necessarily a hard failure; keep polling.
+			// The real SiteReadiness enum (current_state) has two genuine
+			// terminal-failure values, NOT_READY and INACTIVE; failing fast on
+			// them (rather than spinning for the full 90-minute timeout) mirrors
+			// how a 404 above is already treated as terminal. UNKNOWN,
+			// ONBOARD_IN_PROGRESS, and OFFBOARD_IN_PROGRESS are legitimate
+			// non-terminal states, so those keep polling.
+			switch site.CurrentState {
+			case "NOT_READY", "INACTIVE":
+				return fmt.Errorf("site %s reached a terminal failure state: current_state=%s", siteID, site.CurrentState)
+			}
+			// Similarly, connection_status == UNHEALTHY is not always a
+			// permanent failure on its own (current_state is the authoritative
+			// readiness signal), so it does not short-circuit the poll here.
 		}
 
 		select {
@@ -787,9 +1109,141 @@ func (c *Client) WaitForUpgradeComplete(ctx context.Context) (*UpgradeStatus, er
 	}
 }
 
+// WaitForMegaBundleReady polls GET /ssp/security-content/bundles/{bundle-id}
+// until upload_status reaches a terminal state (SUCCESS/FAILED). The spec's
+// dedicated .../bundles/{id}/status endpoint is documented as returning the
+// generic AsyncActivity schema, which has no status-like field; the bundle's
+// own upload_status (on the object returned by GetMegaBundle) is the actual
+// authoritative terminal-state signal, so that is what this polls.
+func (c *Client) WaitForMegaBundleReady(ctx context.Context, bundleID string) (*MegaBundle, error) {
+	deadline := time.Now().Add(defaultPollTimeout)
+	var lastErr error
+	for {
+		if time.Now().After(deadline) {
+			if lastErr != nil {
+				return nil, fmt.Errorf("timed out waiting for mega bundle %s to finish processing (last error: %w)", bundleID, lastErr)
+			}
+			return nil, fmt.Errorf("timed out waiting for mega bundle %s to finish processing", bundleID)
+		}
+
+		var bundle MegaBundle
+		_, err := c.Get(ctx, "/ssp/security-content/bundles/"+bundleID, &bundle)
+		if err != nil {
+			lastErr = fmt.Errorf("error polling mega bundle status: %w", err)
+		} else {
+			switch bundle.UploadStatus {
+			case "SUCCESS":
+				return &bundle, nil
+			case "FAILED":
+				return &bundle, fmt.Errorf("mega bundle processing failed: %s", bundle.StatusMessage)
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(defaultPollInterval):
+		}
+	}
+}
+
 // ── HTTP primitives ───────────────────────────────────────────────────────────
 
 // do executes an HTTP request with Basic Auth and returns the response body.
+// PostMultipartFile uploads a local file as a multipart/form-data "file" field
+// to path (optionally with a raw query string appended, e.g.
+// "bundle_type=FIREWALL_ATP"), streaming it through an io.Pipe so the whole
+// file is never buffered in memory regardless of size (mega bundles can be
+// several GB) — mirrors the equivalent streaming upload in
+// terraform-provider-sspi's bundle upload path. Uses a dedicated long-timeout
+// HTTP client (reusing this Client's configured Transport for proxy/TLS
+// settings) since the shared client's default timeout is sized for small JSON
+// payloads, not multi-GB uploads.
+func (c *Client) PostMultipartFile(ctx context.Context, path, rawQuery, filePath string, out interface{}) (int, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return 0, fmt.Errorf("failed to open file %s: %w", filePath, err)
+	}
+	defer func() { _ = file.Close() }()
+
+	pr, pw := io.Pipe()
+	mw := multipart.NewWriter(pw)
+	contentType := mw.FormDataContentType()
+
+	writeErrCh := make(chan error, 1)
+	go func() {
+		defer close(writeErrCh)
+		fw, err := mw.CreateFormFile("file", filepath.Base(filePath))
+		if err != nil {
+			writeErrCh <- fmt.Errorf("error creating multipart form file: %w", err)
+			_ = pw.CloseWithError(err)
+			return
+		}
+		if _, err := io.Copy(fw, file); err != nil {
+			writeErrCh <- fmt.Errorf("error writing file to multipart form: %w", err)
+			_ = pw.CloseWithError(err)
+			return
+		}
+		if err := mw.Close(); err != nil {
+			writeErrCh <- fmt.Errorf("error closing multipart writer: %w", err)
+			_ = pw.CloseWithError(err)
+			return
+		}
+		_ = pw.Close()
+	}()
+
+	url := c.host + path
+	if rawQuery != "" {
+		url += "?" + rawQuery
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, pr)
+	if err != nil {
+		return 0, fmt.Errorf("failed to create upload request: %w", err)
+	}
+	req.SetBasicAuth(c.username, c.password)
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("Accept", "application/json")
+
+	uploadClient := &http.Client{
+		Transport: c.httpClient.Transport,
+		Timeout:   30 * time.Minute,
+	}
+
+	resp, err := uploadClient.Do(req)
+	// Do() can return a non-nil resp alongside a non-nil err in rare cases, and
+	// can also return a valid resp even when the multipart-writer goroutine
+	// below reported an error (e.g. the server responds before fully reading
+	// the request body) — close it on every path once assigned, before any
+	// early return, so a mid-upload write failure can never leak the
+	// connection/response body.
+	if resp != nil {
+		defer resp.Body.Close()
+	}
+	if writeErr := <-writeErrCh; writeErr != nil {
+		return 0, writeErr
+	}
+	if err != nil {
+		return 0, fmt.Errorf("upload request failed: %w", err)
+	}
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return resp.StatusCode, fmt.Errorf("failed to read upload response body: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		return resp.StatusCode, fmt.Errorf("API error %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	if out != nil && len(respBody) > 0 {
+		if err := json.Unmarshal(respBody, out); err != nil {
+			return resp.StatusCode, fmt.Errorf("failed to decode upload response: %w", err)
+		}
+	}
+
+	return resp.StatusCode, nil
+}
+
 func (c *Client) do(ctx context.Context, method, path string, body interface{}) ([]byte, int, error) {
 	var bodyReader io.Reader
 	if body != nil {
@@ -842,6 +1296,13 @@ func (c *Client) Get(ctx context.Context, path string, out interface{}) (int, er
 		}
 	}
 	return status, nil
+}
+
+// GetRaw performs a GET request and returns the raw response body without
+// attempting JSON decoding, for endpoints that return a non-JSON content
+// type (e.g. GET /ssp/telemetry/data, which returns text/csv).
+func (c *Client) GetRaw(ctx context.Context, path string) ([]byte, int, error) {
+	return c.do(ctx, http.MethodGet, path, nil)
 }
 
 // Post performs a POST request with a JSON body and decodes the response.

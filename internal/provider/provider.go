@@ -133,16 +133,25 @@ func (p *SspProvider) Resources(ctx context.Context) []func() resource.Resource 
 		NewMalwarePreventionConfigResource,
 		NewCloudConnectorConfigResource,
 		NewNdrConfigResource,
-		// Certificate import, Ingress CSR generation, CA bundle import, and support
-		// bundle generation/download are intentionally NOT implemented: none of
-		// apis/ssp_public_apis.yaml exposes a certificate/CSR/CA-bundle import
-		// capability (the only /ssp/trust/* path is trust-rollout-status, a
-		// read-only status endpoint), and the only "/ssp/bundles*" paths belong to
-		// the unrelated security-content Mega Bundle upload API
-		// (UploadMegaBundle/ListMegaBundle/GetMegaBundle/DeleteMegaBundle), not a
-		// diagnostic/support-bundle capability. There is currently no real backend
-		// for these four resource types, so no resource_*.go files exist for them
-		// today -- add them only once the corresponding public API is published.
+		NewIntelligenceConfigResource,
+		NewMalwareAnalysisVcConfigResource,
+		NewSecurityContentConfigResource,
+		NewSiteIdpsConfigResource,
+		NewSecurityContentBundleResource,
+		NewSiteSettingsResource,
+		NewAlarmDefinitionConfigResource,
+		NewAlarmStateResource,
+		// Certificate import, Ingress CSR generation, and CA bundle import are
+		// intentionally NOT implemented: apis/ssp_public_apis.yaml exposes no
+		// certificate/CSR/CA-bundle import capability (the only /ssp/trust/*
+		// path is trust-rollout-status, a read-only status endpoint). There is
+		// currently no real backend for these three resource types, so no
+		// resource_*.go files exist for them today -- add them only once the
+		// corresponding public API is published. (Support bundle generation/
+		// download is likewise out of scope; the security-content Mega Bundle
+		// upload API this comment used to lump in with it is now implemented
+		// as ssp_security_content_bundle above -- it was never a support-bundle
+		// capability to begin with.)
 	}
 }
 
@@ -158,6 +167,13 @@ func (p *SspProvider) DataSources(ctx context.Context) []func() datasource.DataS
 		NewFeatureDataSource,
 		NewUpgradeAvailableVersionsDataSource,
 		NewUpgradeHistoryDataSource,
+		NewRestoreStatusDataSource,
+		NewServicesStatusDataSource,
+		NewTelemetryDataDataSource,
+		NewAlarmDefinitionsDataSource,
+		NewAlarmsDataSource,
+		NewAlarmDataSource,
+		NewAlarmCountsDataSource,
 	}
 }
 

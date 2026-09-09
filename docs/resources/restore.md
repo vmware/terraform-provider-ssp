@@ -22,11 +22,13 @@ Corresponds to `POST /ssp/restore` and `GET /ssp/restore/status/{id}`.
 
 ### Optional
 
-- `action` (String) Restore action trigger. Defaults to `RESTORE`.
+- `action` (String) Restore action trigger. The real `RestoreAction` enum has exactly one value, `RESTORE`.
 - `force_restore` (Boolean) When true, bypasses non-fatal validation warnings during restore.
 
 ### Read-Only
 
+- `error_messages` (List of String) Error messages encountered during the restore operation, if any.
 - `id` (String) Unique ID of the restore execution job.
+- `no_of_entities` (Number) Number of managed entities restored.
 - `progress` (Number) Percentage progress of the restore operation.
 - `status` (String) Status of the restore execution (`SUCCESS`, `FAILED`, `IN_PROGRESS`).
