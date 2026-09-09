@@ -11,7 +11,13 @@ description: |-
   Supported features: MALWARE_PREVENTION, INTELLIGENCE, NDR, BAREMETAL_SECURITY,
   RULE_ANALYSIS, AI_ASSISTANT_PLATFORM, AI_ASSISTANT_THREAT_DEFENSE,
   MALWARE_ANALYSIS_VC, SPAC, NETWORK_TRAFFIC_ANALYSIS, UPGRADE_COORDINATOR,
-  CLOUD_CONNECTOR, METRICS.
+  CLOUD_CONNECTOR. METRICS is intentionally excluded: it is pre-installed
+  with Security Services Platform and cannot be independently deployed or
+  undeployed.
+  Every supported feature is activated with the platform's default settings.
+  Feature-specific custom settings (where the platform exposes them, e.g.
+  ssp_ndr_config, ssp_cloud_connector_config, ssp_malware_prevention_config)
+  are configured separately via their own resources.
   Corresponds to GET/PUT /ssp/lcm/features/{feature} and
   GET /ssp/lcm/features/{feature}/status.
 ---
@@ -28,7 +34,14 @@ at a time; concurrent `ssp_feature`/`ssp_site` resources within the same
 Supported features: `MALWARE_PREVENTION`, `INTELLIGENCE`, `NDR`, `BAREMETAL_SECURITY`,
 `RULE_ANALYSIS`, `AI_ASSISTANT_PLATFORM`, `AI_ASSISTANT_THREAT_DEFENSE`,
 `MALWARE_ANALYSIS_VC`, `SPAC`, `NETWORK_TRAFFIC_ANALYSIS`, `UPGRADE_COORDINATOR`,
-`CLOUD_CONNECTOR`, `METRICS`.
+`CLOUD_CONNECTOR`. `METRICS` is intentionally excluded: it is pre-installed
+with Security Services Platform and cannot be independently deployed or
+undeployed.
+
+Every supported feature is activated with the platform's default settings.
+Feature-specific custom settings (where the platform exposes them, e.g.
+`ssp_ndr_config`, `ssp_cloud_connector_config`, `ssp_malware_prevention_config`)
+are configured separately via their own resources.
 
 Corresponds to `GET/PUT /ssp/lcm/features/{feature}` and
 `GET /ssp/lcm/features/{feature}/status`.
