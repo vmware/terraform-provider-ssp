@@ -20,8 +20,14 @@ import (
 	"github.com/vmware/terraform-provider-ssp/internal/provider/client"
 )
 
-// sspFeatureEnum lists every real value of the SspFeature enum
-// (apis/ssp_public_apis.yaml), used to validate the `feature` attribute.
+// sspFeatureEnum lists every independently deploy/undeploy-able value of the
+// SspFeature enum (apis/ssp_public_apis.yaml), used to validate the `feature`
+// attribute. METRICS is deliberately excluded: the spec's own SspFeature
+// description states it "is pre-installed with Security Services Platform
+// and cannot be installed or uninstalled separately" — so unlike every other
+// value here, a RUN_PRECHECK/DEPLOY/UNDEPLOY against METRICS is not a
+// meaningful operation. Letting it pass this OneOf would only trade a clear
+// plan-time validation error for a confusing apply-time API failure.
 var sspFeatureEnum = []string{
 	"MALWARE_PREVENTION",
 	"INTELLIGENCE",
@@ -35,7 +41,6 @@ var sspFeatureEnum = []string{
 	"NETWORK_TRAFFIC_ANALYSIS",
 	"UPGRADE_COORDINATOR",
 	"CLOUD_CONNECTOR",
-	"METRICS",
 }
 
 // lcmMu serialises all SSP LCM lifecycle actions within a single Terraform
@@ -86,7 +91,13 @@ func (r *FeatureResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 			"Supported features: `MALWARE_PREVENTION`, `INTELLIGENCE`, `NDR`, `BAREMETAL_SECURITY`,\n" +
 			"`RULE_ANALYSIS`, `AI_ASSISTANT_PLATFORM`, `AI_ASSISTANT_THREAT_DEFENSE`,\n" +
 			"`MALWARE_ANALYSIS_VC`, `SPAC`, `NETWORK_TRAFFIC_ANALYSIS`, `UPGRADE_COORDINATOR`,\n" +
-			"`CLOUD_CONNECTOR`, `METRICS`.\n\n" +
+			"`CLOUD_CONNECTOR`. `METRICS` is intentionally excluded: it is pre-installed\n" +
+			"with Security Services Platform and cannot be independently deployed or\n" +
+			"undeployed.\n\n" +
+			"Every supported feature is activated with the platform's default settings.\n" +
+			"Feature-specific custom settings (where the platform exposes them, e.g.\n" +
+			"`ssp_ndr_config`, `ssp_cloud_connector_config`, `ssp_malware_prevention_config`)\n" +
+			"are configured separately via their own resources.\n\n" +
 			"Corresponds to `GET/PUT /ssp/lcm/features/{feature}` and\n" +
 			"`GET /ssp/lcm/features/{feature}/status`.",
 

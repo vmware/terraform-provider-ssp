@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"sync"
 	"testing"
 
@@ -107,6 +108,28 @@ resource "ssp_feature" "test" {
 				ResourceName:      "ssp_feature.test",
 				ImportState:       true,
 				ImportStateVerify: true,
+			},
+		},
+	})
+}
+
+// TestUnitFeatureResource_MetricsRejected verifies that METRICS -- pre-installed
+// and not independently deploy/undeploy-able per the SspFeature spec -- is
+// rejected at plan time by the `feature` attribute's OneOf validator, rather
+// than failing confusingly against the live API at apply time.
+func TestUnitFeatureResource_MetricsRejected(t *testing.T) {
+	srv, _ := newFeatureMockServer(t)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testUnitRuntimeProviderConfig(srv.URL) + `
+resource "ssp_feature" "test" {
+  feature = "METRICS"
+}
+`,
+				ExpectError: regexp.MustCompile(`(?s)Attribute feature value must be one of:.*got:\s*"METRICS"`),
 			},
 		},
 	})
