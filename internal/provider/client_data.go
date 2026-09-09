@@ -1,3 +1,6 @@
+// © Broadcom. All Rights Reserved.
+// The term "Broadcom" refers to Broadcom Inc. and/or its subsidiaries.
+
 package provider
 
 import (
@@ -5,19 +8,11 @@ import (
 	"os"
 	"sync"
 
-	"github.com/vmware/terraform-provider-ssp/internal/client/api_client"
-	"github.com/vmware/terraform-provider-ssp/internal/client/depot_client"
-	"github.com/vmware/terraform-provider-ssp/internal/client/iam_client"
 	"github.com/vmware/terraform-provider-ssp/internal/provider/client"
 )
 
 // ClientData is the shared provider configuration passed to resources and data sources.
 type ClientData struct {
-	// SSPI Appliance Clients (Day-0 / Day-1)
-	API   *api_client.ClientWithResponses
-	Depot *depot_client.ClientWithResponses
-	IAM   *iam_client.ClientWithResponses
-
 	// SSP Runtime Client parameters (Day-2)
 	RuntimeHost     string
 	RuntimeUsername string
@@ -27,10 +22,6 @@ type ClientData struct {
 	runtimeClient *client.Client
 	mu            sync.Mutex
 }
-
-func (c *ClientData) GetAPI() *api_client.ClientWithResponses     { return c.API }
-func (c *ClientData) GetDepot() *depot_client.ClientWithResponses { return c.Depot }
-func (c *ClientData) GetIAM() *iam_client.ClientWithResponses     { return c.IAM }
 
 // GetSSPClient returns the authenticated HTTP client for SSP runtime APIs (lazy initialized).
 func (c *ClientData) GetSSPClient() (*client.Client, error) {

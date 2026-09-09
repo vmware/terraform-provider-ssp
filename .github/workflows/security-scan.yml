@@ -45,9 +45,3 @@ jobs:
           scan-type: fs
           scanners: secret
           exit-code: "1"
-          # apis/ssp_public_apis.yaml is a vendored OpenAPI spec whose example
-          # values for the LLM-config GCP service-account key field
-          # (documentation placeholders, not real credentials) match Trivy's
-          # gcp-service-account secret pattern. Skip it rather than editing
-          # the spec's example content.
-          skip-files: apis/ssp_public_apis.yaml

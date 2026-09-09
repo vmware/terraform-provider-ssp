@@ -1,3 +1,6 @@
+// © Broadcom. All Rights Reserved.
+// The term "Broadcom" refers to Broadcom Inc. and/or its subsidiaries.
+
 // Package client provides an HTTP client for the SSP REST API.
 package client
 
@@ -15,9 +18,19 @@ import (
 	"golang.org/x/net/proxy"
 )
 
-const (
+// defaultPollInterval and defaultPollTimeout are vars, not consts, so unit
+// tests in this package can temporarily shrink them (save/restore) to
+// exercise the multi-iteration polling loop and deadline logic below in
+// milliseconds instead of the real 15s/90min production values.
+var (
 	defaultPollInterval = 15 * time.Second
 	defaultPollTimeout  = 90 * time.Minute
+
+	// sspAPIReadyPollInterval is WaitForSSPAPIReady's own retry interval
+	// (30s in production), kept separate from defaultPollInterval since its
+	// caller (ssp_readiness) supplies its own timeout rather than using
+	// defaultPollTimeout. Also a var, not a const, so unit tests can shrink it.
+	sspAPIReadyPollInterval = 30 * time.Second
 )
 
 // Client is an authenticated HTTP client for the SSP API.
@@ -32,7 +45,7 @@ type Client struct {
 func NewClient(host, username, password string, insecure bool) *Client {
 	transport := &http.Transport{
 		Proxy:           http.ProxyFromEnvironment,
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: insecure}, //nolint:gosec
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: insecure, MinVersion: tls.VersionTLS12}, //nolint:gosec
 	}
 	if strings.HasPrefix(host, "http://127.0.0.1") || strings.HasPrefix(host, "http://localhost") {
 		transport.Proxy = nil
@@ -192,7 +205,7 @@ type SiteConnection struct {
 	Certificate    string   `json:"certificate,omitempty"`
 }
 
-// UserCredentials is required by the DELETE /ssp/site-service/sites/{id} body.
+// UserCredentials is required by the DELETE /ssp/sites/{id} body.
 type UserCredentials struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
@@ -206,7 +219,7 @@ type NsxSiteStatus struct {
 	NsxVersion       string `json:"nsx_version,omitempty"`
 }
 
-// SiteList is the response from GET /ssp/site-service/sites.
+// SiteList is the response from GET /ssp/sites.
 type SiteList struct {
 	Sites            []Site `json:"sites"`
 	TotalResultCount int    `json:"total_result_count"`
@@ -575,7 +588,7 @@ func (c *Client) WaitForFeatureDeployment(ctx context.Context, feature string) (
 
 // ── Async polling helpers ─────────────────────────────────────────────────────
 
-// WaitForSiteReady polls GET /ssp/site-service/sites/{id} until the site reaches
+// WaitForSiteReady polls GET /ssp/sites/{id} until the site reaches
 // READY state (connection_status == HEALTHY) or a terminal failure is detected.
 func (c *Client) WaitForSiteReady(ctx context.Context, siteID string) error {
 	deadline := time.Now().Add(defaultPollTimeout)
@@ -589,7 +602,7 @@ func (c *Client) WaitForSiteReady(ctx context.Context, siteID string) error {
 		}
 
 		var site Site
-		httpStatus, err := c.Get(ctx, "/ssp/site-service/sites/"+siteID, &site)
+		httpStatus, err := c.Get(ctx, "/ssp/sites/"+siteID, &site)
 		if err != nil {
 			if httpStatus == 404 {
 				// 404 during a readiness poll is a genuine terminal failure
@@ -618,7 +631,7 @@ func (c *Client) WaitForSiteReady(ctx context.Context, siteID string) error {
 	}
 }
 
-// WaitForSiteDeleted polls GET /ssp/site-service/sites/{id} until a 404 is returned.
+// WaitForSiteDeleted polls GET /ssp/sites/{id} until a 404 is returned.
 func (c *Client) WaitForSiteDeleted(ctx context.Context, siteID string) error {
 	deadline := time.Now().Add(defaultPollTimeout)
 	var lastErr error
@@ -631,7 +644,7 @@ func (c *Client) WaitForSiteDeleted(ctx context.Context, siteID string) error {
 		}
 
 		var site Site
-		httpStatus, err := c.Get(ctx, "/ssp/site-service/sites/"+siteID, &site)
+		httpStatus, err := c.Get(ctx, "/ssp/sites/"+siteID, &site)
 		if httpStatus == 404 {
 			return nil
 		}
@@ -888,7 +901,7 @@ func (c *Client) WaitForSSPAPIReady(ctx context.Context, timeout time.Duration) 
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(30 * time.Second):
+		case <-time.After(sspAPIReadyPollInterval):
 		}
 	}
 }

@@ -1,3 +1,6 @@
+// © Broadcom. All Rights Reserved.
+// The term "Broadcom" refers to Broadcom Inc. and/or its subsidiaries.
+
 package provider
 
 import (
@@ -9,6 +12,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/vmware/terraform-provider-ssp/internal/provider/client"
 )
@@ -77,8 +81,11 @@ func (r *BackupConfigResource) Schema(ctx context.Context, req resource.SchemaRe
 				MarkdownDescription: "SSH public key of the backup server for host verification.",
 			},
 			"backup_location": schema.StringAttribute{
-				Required:            true,
-				MarkdownDescription: "Directory on the backup server where backup bundles are stored.",
+				Required: true,
+				MarkdownDescription: "Directory on the backup server where backup bundles are stored. " +
+					"Must not end in a trailing slash (rejected at plan time) — the API strips one if present, " +
+					"which would otherwise cause a permanent post-apply diff.",
+				Validators: []validator.String{noTrailingSlash()},
 			},
 			"password": schema.StringAttribute{
 				Required:            true,

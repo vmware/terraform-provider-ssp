@@ -1,3 +1,6 @@
+// © Broadcom. All Rights Reserved.
+// The term "Broadcom" refers to Broadcom Inc. and/or its subsidiaries.
+
 package provider
 
 import (
@@ -38,7 +41,7 @@ func (d *SiteDataSource) Metadata(ctx context.Context, req datasource.MetadataRe
 func (d *SiteDataSource) Schema(ctx context.Context, req datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Reads a specific site from the SSP platform by its ID.\n\n" +
-			"Corresponds to `GET /ssp/site-service/sites/{site-id}`.",
+			"Corresponds to `GET /ssp/sites/{site-id}`.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Required:            true,
@@ -96,7 +99,7 @@ func (d *SiteDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 	}
 
 	var site client.Site
-	status, err := d.client.Get(ctx, "/ssp/site-service/sites/"+data.ID.ValueString(), &site)
+	status, err := d.client.Get(ctx, "/ssp/sites/"+data.ID.ValueString(), &site)
 	if status == 404 {
 		resp.Diagnostics.AddError("Site not found", fmt.Sprintf("No site with ID %s", data.ID.ValueString()))
 		return

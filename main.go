@@ -1,3 +1,6 @@
+// © Broadcom. All Rights Reserved.
+// The term "Broadcom" refers to Broadcom Inc. and/or its subsidiaries.
+
 //go:generate go tool tfplugindocs generate --rendered-provider-name ssp
 
 package main

@@ -1,3 +1,6 @@
+// © Broadcom. All Rights Reserved.
+// The term "Broadcom" refers to Broadcom Inc. and/or its subsidiaries.
+
 package provider
 
 import (
@@ -38,7 +41,7 @@ func (d *SitesDataSource) Metadata(ctx context.Context, req datasource.MetadataR
 func (d *SitesDataSource) Schema(ctx context.Context, req datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Lists all sites (NSX Manager, AVI, SSP) currently connected to the SSP platform.\n\n" +
-			"Corresponds to `GET /ssp/site-service/sites`.",
+			"Corresponds to `GET /ssp/sites`.",
 		Attributes: map[string]schema.Attribute{
 			"sites": schema.ListNestedAttribute{
 				Computed:            true,
@@ -73,7 +76,7 @@ func (d *SitesDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 	var data SitesDataSourceModel
 
 	var list client.SiteList
-	_, err := d.client.Get(ctx, "/ssp/site-service/sites", &list)
+	_, err := d.client.Get(ctx, "/ssp/sites", &list)
 	if err != nil {
 		resp.Diagnostics.AddError("Error listing sites", err.Error())
 		return
