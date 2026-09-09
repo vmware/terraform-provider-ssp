@@ -22,5 +22,19 @@ Corresponds to `GET /ssp/cluster/monitor/platform/status`.
 - `cluster_name` (String) Display name of the SSP cluster.
 - `form_factor` (String) Current form factor (e.g. MEDIUM, LARGE, EXTRA_LARGE).
 - `health` (String) Overall cluster health: `UP`, `PARTIALLY_UP`, or `DOWN`.
+- `ingress_url` (String) Endpoint for cluster ingress.
+- `k8s_version` (String) Version of the underlying Kubernetes infrastructure the platform is built on.
+- `message_bus_endpoint` (String) Endpoint of the platform message bus (FQDN:Port or IP:Port).
+- `network_data_flow` (Attributes) Network data flow statistics for the cluster. (see [below for nested schema](#nestedatt--network_data_flow))
 - `node_count` (Number) Total number of nodes in the cluster.
 - `product_version` (String) SSP product version string.
+
+<a id="nestedatt--network_data_flow"></a>
+
+### Nested Schema for `network_data_flow`
+
+Read-Only:
+
+- `receive` (Number) Network data receive rate.
+- `total` (Number) Total of transmit and receive data rates.
+- `transmit` (Number) Network data transmit rate.

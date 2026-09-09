@@ -31,10 +31,13 @@ func newBackupMockServer(t *testing.T) *httptest.Server {
 	mux.HandleFunc("GET /ssp/backup/status/backup-1", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"id":          "backup-1",
-			"status":      "SUCCESS",
-			"backup_type": "FULL_BACKUP",
-			"progress":    100,
+			"id":             "backup-1",
+			"status":         "SUCCESS",
+			"backup_type":    "FULL_BACKUP",
+			"progress":       100,
+			"file_size":      104857600,
+			"no_of_entities": 42,
+			"error_messages": []string{},
 		})
 	})
 
@@ -74,6 +77,9 @@ func TestUnitBackupResource(t *testing.T) {
 					resource.TestCheckResourceAttr("ssp_backup.test", "name", "tf-unit-test-backup"),
 					resource.TestCheckResourceAttr("ssp_backup.test", "status", "SUCCESS"),
 					resource.TestCheckResourceAttr("ssp_backup.test", "progress", "100"),
+					resource.TestCheckResourceAttr("ssp_backup.test", "file_size", "104857600"),
+					resource.TestCheckResourceAttr("ssp_backup.test", "no_of_entities", "42"),
+					resource.TestCheckResourceAttr("ssp_backup.test", "error_messages.#", "0"),
 				),
 			},
 		},

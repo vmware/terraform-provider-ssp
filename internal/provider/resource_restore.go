@@ -5,12 +5,16 @@ package provider
 
 import (
 	"context"
+	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/vmware/terraform-provider-ssp/internal/provider/client"
 )
@@ -28,12 +32,14 @@ type RestoreResource struct {
 
 // RestoreResourceModel is the Terraform state model for system restore.
 type RestoreResourceModel struct {
-	ID           types.String `tfsdk:"id"`
-	BackupID     types.String `tfsdk:"backup_id"`
-	ForceRestore types.Bool   `tfsdk:"force_restore"`
-	Action       types.String `tfsdk:"action"`
-	Status       types.String `tfsdk:"status"`
-	Progress     types.Int64  `tfsdk:"progress"`
+	ID            types.String `tfsdk:"id"`
+	BackupID      types.String `tfsdk:"backup_id"`
+	ForceRestore  types.Bool   `tfsdk:"force_restore"`
+	Action        types.String `tfsdk:"action"`
+	Status        types.String `tfsdk:"status"`
+	Progress      types.Int64  `tfsdk:"progress"`
+	NoOfEntities  types.Int64  `tfsdk:"no_of_entities"`
+	ErrorMessages types.List   `tfsdk:"error_messages"`
 }
 
 func (r *RestoreResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -65,8 +71,9 @@ func (r *RestoreResource) Schema(ctx context.Context, req resource.SchemaRequest
 			"action": schema.StringAttribute{
 				Optional:            true,
 				Computed:            true,
-				MarkdownDescription: "Restore action trigger. Defaults to `RESTORE`.",
+				MarkdownDescription: "Restore action trigger. The real `RestoreAction` enum has exactly one value, `RESTORE`.",
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
+				Validators:          []validator.String{stringvalidator.OneOf("RESTORE")},
 			},
 			"status": schema.StringAttribute{
 				Computed:            true,
@@ -75,6 +82,15 @@ func (r *RestoreResource) Schema(ctx context.Context, req resource.SchemaRequest
 			"progress": schema.Int64Attribute{
 				Computed:            true,
 				MarkdownDescription: "Percentage progress of the restore operation.",
+			},
+			"no_of_entities": schema.Int64Attribute{
+				Computed:            true,
+				MarkdownDescription: "Number of managed entities restored.",
+			},
+			"error_messages": schema.ListAttribute{
+				Computed:            true,
+				ElementType:         types.StringType,
+				MarkdownDescription: "Error messages encountered during the restore operation, if any.",
 			},
 		},
 	}
@@ -133,12 +149,13 @@ func (r *RestoreResource) Create(ctx context.Context, req resource.CreateRequest
 
 	status, waitErr := r.client.WaitForRestoreComplete(ctx, restoreID)
 	if status != nil {
-		data.Status = types.StringValue(status.Status)
-		data.Progress = types.Int64Value(int64(status.Progress))
+		resp.Diagnostics.Append(mapRestoreStatusToState(ctx, status, &data)...)
 	} else {
 		// The API already accepted and started this job (restoreID is real)
 		// even though the poll below didn't observe a terminal status.
 		data.Status = types.StringValue("IN_PROGRESS")
+		data.NoOfEntities = types.Int64Value(0)
+		data.ErrorMessages = types.ListNull(types.StringType)
 	}
 
 	// Persist state now, regardless of the poll outcome: the restore job was
@@ -146,7 +163,11 @@ func (r *RestoreResource) Create(ctx context.Context, req resource.CreateRequest
 	// cause the next apply to POST a second, duplicate/orphaned restore job.
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 	if waitErr != nil {
-		resp.Diagnostics.AddError("Restore operation failed", waitErr.Error())
+		errMsg := waitErr.Error()
+		if status != nil && len(status.ErrorMessages) > 0 {
+			errMsg += ": " + strings.Join(status.ErrorMessages, "; ")
+		}
+		resp.Diagnostics.AddError("Restore operation failed", errMsg)
 	}
 }
 
@@ -168,13 +189,27 @@ func (r *RestoreResource) Read(ctx context.Context, req resource.ReadRequest, re
 		return
 	}
 
-	data.Status = types.StringValue(status.Status)
-	data.Progress = types.Int64Value(int64(status.Progress))
+	resp.Diagnostics.Append(mapRestoreStatusToState(ctx, &status, &data)...)
 	if status.BackupID != "" {
 		data.BackupID = types.StringValue(status.BackupID)
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+}
+
+// mapRestoreStatusToState maps a client.RestoreStatus onto the Terraform
+// model's status/progress/no_of_entities/error_messages attributes.
+func mapRestoreStatusToState(ctx context.Context, status *client.RestoreStatus, data *RestoreResourceModel) diag.Diagnostics {
+	var diags diag.Diagnostics
+	data.Status = types.StringValue(status.Status)
+	data.Progress = types.Int64Value(int64(status.Progress))
+	data.NoOfEntities = types.Int64Value(int64(status.NoOfEntities))
+
+	errMsgs, d := types.ListValueFrom(ctx, types.StringType, status.ErrorMessages)
+	diags.Append(d...)
+	data.ErrorMessages = errMsgs
+
+	return diags
 }
 
 func (r *RestoreResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {

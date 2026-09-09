@@ -31,10 +31,12 @@ func newRestoreMockServer(t *testing.T) *httptest.Server {
 	mux.HandleFunc("GET /ssp/restore/status/restore-1", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"id":        "restore-1",
-			"backup_id": "backup-1",
-			"status":    "SUCCESS",
-			"progress":  100,
+			"id":             "restore-1",
+			"backup_id":      "backup-1",
+			"status":         "SUCCESS",
+			"progress":       100,
+			"no_of_entities": 42,
+			"error_messages": []string{},
 		})
 	})
 
@@ -73,6 +75,8 @@ func TestUnitRestoreResource(t *testing.T) {
 					resource.TestCheckResourceAttr("ssp_restore.test", "force_restore", "false"),
 					resource.TestCheckResourceAttr("ssp_restore.test", "status", "SUCCESS"),
 					resource.TestCheckResourceAttr("ssp_restore.test", "progress", "100"),
+					resource.TestCheckResourceAttr("ssp_restore.test", "no_of_entities", "42"),
+					resource.TestCheckResourceAttr("ssp_restore.test", "error_messages.#", "0"),
 				),
 			},
 		},

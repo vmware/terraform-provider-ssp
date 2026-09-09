@@ -23,8 +23,8 @@ Corresponds to `GET/PUT /ssp/backup/config`.
 
 ### Required
 
-- `backup_location` (String) Directory on the backup server where backup bundles are stored.
-- `passphrase` (String, Sensitive) Passphrase to encrypt backup bundles (6–255 chars). Write-only. Marked optional in `apis/ssp_public_apis.yaml`'s `BackupConfig` schema, but the live `PUT /ssp/backup/config` API rejects requests with an empty passphrase (`"Passphrase can not be empty."`) — required here to match observed live behavior.
+- `backup_location` (String) Directory on the backup server where backup bundles are stored. Must not end in a trailing slash (rejected at plan time) — the API strips one if present, which would otherwise cause a permanent post-apply diff.
+- `passphrase` (String, Sensitive) Passphrase to encrypt backup bundles (12–255 chars). Write-only. Marked optional in `apis/ssp_public_apis.yaml`'s `BackupConfig` schema, but the live `PUT /ssp/backup/config` API rejects requests with an empty passphrase (`"Passphrase can not be empty."`) — required here to match observed live behavior.
 - `password` (String, Sensitive) Password for SSH authentication to the backup server (6–255 chars). Write-only.
 - `port` (Number) TCP port for the SFTP connection (1–65535).
 - `protocol` (String) File transfer protocol. Currently only `SFTP` is supported.

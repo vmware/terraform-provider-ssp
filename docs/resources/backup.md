@@ -28,6 +28,9 @@ Corresponds to `POST /ssp/backup` and `GET /ssp/backup/status/{id}`.
 
 ### Read-Only
 
+- `error_messages` (List of String) Error messages encountered during the backup operation, if any.
+- `file_size` (Number) Size in bytes of the completed backup file.
 - `id` (String) Unique ID of the backup execution job.
+- `no_of_entities` (Number) Number of managed entities included in the backup.
 - `progress` (Number) Percentage progress of the backup operation.
 - `status` (String) Status of the backup execution (`SUCCESS`, `FAILED`, `IN_PROGRESS`).

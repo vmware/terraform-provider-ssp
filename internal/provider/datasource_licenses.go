@@ -27,14 +27,17 @@ type LicensesDataSourceModel struct {
 }
 
 type LicenseModel struct {
-	LicenseID          types.String `tfsdk:"license_id"`
-	ProductDisplayName types.String `tfsdk:"product_display_name"`
-	ProductFamily      types.String `tfsdk:"product_family"`
-	Quantity           types.Int64  `tfsdk:"quantity"`
-	UnitOfMeasure      types.String `tfsdk:"unit_of_measure"`
-	Source             types.String `tfsdk:"source"`
-	SkuCode            types.String `tfsdk:"sku_code"`
-	ExpirationDate     types.Int64  `tfsdk:"expiration_date"`
+	LicenseID                 types.String `tfsdk:"license_id"`
+	LicenseType               types.String `tfsdk:"license_type"`
+	ProductDisplayName        types.String `tfsdk:"product_display_name"`
+	ProductFamily             types.String `tfsdk:"product_family"`
+	Quantity                  types.Int64  `tfsdk:"quantity"`
+	UnitOfMeasure             types.String `tfsdk:"unit_of_measure"`
+	Source                    types.String `tfsdk:"source"`
+	SourceID                  types.String `tfsdk:"source_id"`
+	SkuCode                   types.String `tfsdk:"sku_code"`
+	ExpirationDate            types.Int64  `tfsdk:"expiration_date"`
+	ExpiryDateWithGracePeriod types.Int64  `tfsdk:"expiry_date_with_grace_period"`
 }
 
 func (d *LicensesDataSource) Metadata(ctx context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
@@ -51,14 +54,17 @@ func (d *LicensesDataSource) Schema(ctx context.Context, req datasource.SchemaRe
 				MarkdownDescription: "List of all active licenses.",
 				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
-						"license_id":           schema.StringAttribute{Computed: true, MarkdownDescription: "License key / ID."},
-						"product_display_name": schema.StringAttribute{Computed: true, MarkdownDescription: "Human-readable product name."},
-						"product_family":       schema.StringAttribute{Computed: true, MarkdownDescription: "Product family (e.g. FIREWALL WITH ATP)."},
-						"quantity":             schema.Int64Attribute{Computed: true, MarkdownDescription: "Licensed quantity."},
-						"unit_of_measure":      schema.StringAttribute{Computed: true, MarkdownDescription: "Unit of measure for the quantity (e.g. Core)."},
-						"source":               schema.StringAttribute{Computed: true, MarkdownDescription: "License source (e.g. VDLS)."},
-						"sku_code":             schema.StringAttribute{Computed: true, MarkdownDescription: "SKU code for the license."},
-						"expiration_date":      schema.Int64Attribute{Computed: true, MarkdownDescription: "License expiration as Unix epoch in milliseconds."},
+						"license_id":                    schema.StringAttribute{Computed: true, MarkdownDescription: "License key / ID."},
+						"license_type":                  schema.StringAttribute{Computed: true, MarkdownDescription: "Type of license (`DLF`, `V2`, `KEYLESS`, `SUBSCRIPTION`, `EVAL`)."},
+						"product_display_name":          schema.StringAttribute{Computed: true, MarkdownDescription: "Human-readable product name."},
+						"product_family":                schema.StringAttribute{Computed: true, MarkdownDescription: "Product family (e.g. FIREWALL WITH ATP)."},
+						"quantity":                      schema.Int64Attribute{Computed: true, MarkdownDescription: "Licensed quantity."},
+						"unit_of_measure":               schema.StringAttribute{Computed: true, MarkdownDescription: "Unit of measure for the quantity (e.g. Core)."},
+						"source":                        schema.StringAttribute{Computed: true, MarkdownDescription: "License source (e.g. VDLS)."},
+						"source_id":                     schema.StringAttribute{Computed: true, MarkdownDescription: "ID of the onboarded NSX Manager, AVI controller, or Licensing Service this license came from."},
+						"sku_code":                      schema.StringAttribute{Computed: true, MarkdownDescription: "SKU code for the license."},
+						"expiration_date":               schema.Int64Attribute{Computed: true, MarkdownDescription: "License expiration as Unix epoch in milliseconds."},
+						"expiry_date_with_grace_period": schema.Int64Attribute{Computed: true, MarkdownDescription: "License expiration including any grace period, as Unix epoch in milliseconds."},
 					},
 				},
 			},
@@ -96,14 +102,17 @@ func (d *LicensesDataSource) Read(ctx context.Context, req datasource.ReadReques
 	data.Results = make([]LicenseModel, len(list.Results))
 	for i, l := range list.Results {
 		data.Results[i] = LicenseModel{
-			LicenseID:          types.StringValue(l.LicenseID),
-			ProductDisplayName: types.StringValue(l.ProductDisplayName),
-			ProductFamily:      types.StringValue(l.ProductFamily),
-			Quantity:           types.Int64Value(int64(l.Quantity)),
-			UnitOfMeasure:      types.StringValue(l.UnitOfMeasure),
-			Source:             types.StringValue(l.Source),
-			SkuCode:            types.StringValue(l.SkuCode),
-			ExpirationDate:     types.Int64Value(l.ExpirationDate),
+			LicenseID:                 types.StringValue(l.LicenseID),
+			LicenseType:               types.StringValue(l.LicenseType),
+			ProductDisplayName:        types.StringValue(l.ProductDisplayName),
+			ProductFamily:             types.StringValue(l.ProductFamily),
+			Quantity:                  types.Int64Value(int64(l.Quantity)),
+			UnitOfMeasure:             types.StringValue(l.UnitOfMeasure),
+			Source:                    types.StringValue(l.Source),
+			SourceID:                  types.StringValue(l.SourceID),
+			SkuCode:                   types.StringValue(l.SkuCode),
+			ExpirationDate:            types.Int64Value(l.ExpirationDate),
+			ExpiryDateWithGracePeriod: types.Int64Value(l.ExpiryDateWithGracePeriod),
 		}
 	}
 
