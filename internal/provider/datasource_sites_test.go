@@ -1,3 +1,6 @@
+// © Broadcom. All Rights Reserved.
+// The term "Broadcom" refers to Broadcom Inc. and/or its subsidiaries.
+
 package provider_test
 
 import (
@@ -13,7 +16,7 @@ func newSitesDataSourceMockServer(t *testing.T) *httptest.Server {
 	t.Helper()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /ssp/site-service/sites", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /ssp/sites", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(map[string]any{

@@ -1,3 +1,6 @@
+// © Broadcom. All Rights Reserved.
+// The term "Broadcom" refers to Broadcom Inc. and/or its subsidiaries.
+
 package provider
 
 import (
@@ -41,7 +44,7 @@ func (d *LicensesDataSource) Metadata(ctx context.Context, req datasource.Metada
 func (d *LicensesDataSource) Schema(ctx context.Context, req datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Lists all licenses registered with the SSP platform.\n\n" +
-			"Corresponds to `GET /ssp/licenses`.",
+			"Corresponds to `GET /ssp/licensing-client/licenses`.",
 		Attributes: map[string]schema.Attribute{
 			"results": schema.ListNestedAttribute{
 				Computed:            true,
@@ -79,7 +82,7 @@ func (d *LicensesDataSource) Read(ctx context.Context, req datasource.ReadReques
 	var data LicensesDataSourceModel
 
 	var list client.LicenseList
-	status, err := d.client.Get(ctx, "/ssp/licenses", &list)
+	status, err := d.client.Get(ctx, "/ssp/licensing-client/licenses", &list)
 	if err != nil {
 		if status == 404 {
 			data.Results = []LicenseModel{}

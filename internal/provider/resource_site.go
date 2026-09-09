@@ -1,3 +1,6 @@
+// © Broadcom. All Rights Reserved.
+// The term "Broadcom" refers to Broadcom Inc. and/or its subsidiaries.
+
 package provider
 
 import (
@@ -65,7 +68,7 @@ func (r *SiteResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 			"returns them. They are kept in Terraform state (encrypted) so that reconnect and\n" +
 			"offboard operations can use them.\n\n" +
 			"To adopt an existing site: `terraform import ssp_site.this <site-id>`.\n\n" +
-			"Corresponds to `POST/GET/PUT/DELETE /ssp/site-service/sites`.",
+			"Corresponds to `POST/GET/PUT/DELETE /ssp/sites`.",
 
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -191,7 +194,7 @@ func (r *SiteResource) Create(ctx context.Context, req resource.CreateRequest, r
 		SiteConnectionInfo: conn,
 	}
 
-	path := "/ssp/site-service/sites"
+	path := "/ssp/sites"
 	if data.Force.ValueBool() {
 		path += "?force=true"
 	}
@@ -215,7 +218,7 @@ func (r *SiteResource) Create(ctx context.Context, req resource.CreateRequest, r
 	}
 
 	var site client.Site
-	if _, err := r.client.Get(ctx, "/ssp/site-service/sites/"+siteID, &site); err != nil {
+	if _, err := r.client.Get(ctx, "/ssp/sites/"+siteID, &site); err != nil {
 		resp.Diagnostics.AddError("Error reading site after create", err.Error())
 		return
 	}
@@ -232,7 +235,7 @@ func (r *SiteResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 	}
 
 	var site client.Site
-	status, err := r.client.Get(ctx, "/ssp/site-service/sites/"+data.ID.ValueString(), &site)
+	status, err := r.client.Get(ctx, "/ssp/sites/"+data.ID.ValueString(), &site)
 	if status == 404 {
 		resp.State.RemoveResource(ctx)
 		return
@@ -269,7 +272,7 @@ func (r *SiteResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	}
 
 	var current client.Site
-	if _, err := r.client.Get(ctx, "/ssp/site-service/sites/"+state.ID.ValueString(), &current); err != nil {
+	if _, err := r.client.Get(ctx, "/ssp/sites/"+state.ID.ValueString(), &current); err != nil {
 		resp.Diagnostics.AddError("Error reading current site before update", err.Error())
 		return
 	}
@@ -283,7 +286,7 @@ func (r *SiteResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	}
 
 	var asyncResp client.AsyncApiResponse
-	_, err := r.client.Put(ctx, "/ssp/site-service/sites/"+state.ID.ValueString(), payload, &asyncResp)
+	_, err := r.client.Put(ctx, "/ssp/sites/"+state.ID.ValueString(), payload, &asyncResp)
 	if err != nil {
 		resp.Diagnostics.AddError("Error updating site", err.Error())
 		return
@@ -295,7 +298,7 @@ func (r *SiteResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	}
 
 	var site client.Site
-	if _, err := r.client.Get(ctx, "/ssp/site-service/sites/"+state.ID.ValueString(), &site); err != nil {
+	if _, err := r.client.Get(ctx, "/ssp/sites/"+state.ID.ValueString(), &site); err != nil {
 		resp.Diagnostics.AddError("Error reading site after update", err.Error())
 		return
 	}
@@ -325,7 +328,7 @@ func (r *SiteResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 		Password: conn.Password,
 	}
 
-	path := "/ssp/site-service/sites/" + data.ID.ValueString()
+	path := "/ssp/sites/" + data.ID.ValueString()
 	if data.Force.ValueBool() {
 		path += "?force=true"
 	}
@@ -349,7 +352,7 @@ func (r *SiteResource) ImportState(ctx context.Context, req resource.ImportState
 	data.ID = types.StringValue(req.ID)
 
 	var site client.Site
-	status, err := r.client.Get(ctx, "/ssp/site-service/sites/"+req.ID, &site)
+	status, err := r.client.Get(ctx, "/ssp/sites/"+req.ID, &site)
 	if status == 404 {
 		resp.Diagnostics.AddError("Site not found", fmt.Sprintf("No site with ID %s", req.ID))
 		return

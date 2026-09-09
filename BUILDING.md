@@ -1,6 +1,6 @@
 # Building the Terraform Provider for VMware SSP
 
-Instructions for building and developing the **Terraform Provider for VMware Security Services Platform (SSP & SSPI)** (`terraform-provider-ssp`).
+Instructions for building and developing the **Terraform Provider for VMware Security Services Platform (SSP)** (`terraform-provider-ssp`).
 
 ---
 

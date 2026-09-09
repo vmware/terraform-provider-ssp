@@ -1,3 +1,6 @@
+// © Broadcom. All Rights Reserved.
+// The term "Broadcom" refers to Broadcom Inc. and/or its subsidiaries.
+
 package provider_test
 
 import (
@@ -11,7 +14,7 @@ import (
 )
 
 // siteMockAPI simulates the subset of the SSP runtime site-service API
-// (POST/GET/PUT/DELETE /ssp/site-service/sites[/{id}]) needed to drive
+// (POST/GET/PUT/DELETE /ssp/sites[/{id}]) needed to drive
 // ssp_site through a full onboard/reconnect/offboard cycle without a live
 // SSP cluster or NSX Manager.
 type siteMockAPI struct {
@@ -44,7 +47,7 @@ func newSiteMockServer(t *testing.T) *httptest.Server {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /ssp/site-service/sites", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /ssp/sites", func(w http.ResponseWriter, r *http.Request) {
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		var body struct {
@@ -61,7 +64,7 @@ func newSiteMockServer(t *testing.T) *httptest.Server {
 		w.WriteHeader(http.StatusAccepted)
 		_ = json.NewEncoder(w).Encode(map[string]any{"id": "site-1"})
 	})
-	mux.HandleFunc("GET /ssp/site-service/sites/{id}", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /ssp/sites/{id}", func(w http.ResponseWriter, r *http.Request) {
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		if !m.exists {
@@ -70,7 +73,7 @@ func newSiteMockServer(t *testing.T) *httptest.Server {
 		}
 		writeSite(w)
 	})
-	mux.HandleFunc("PUT /ssp/site-service/sites/{id}", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("PUT /ssp/sites/{id}", func(w http.ResponseWriter, r *http.Request) {
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		var body struct {
@@ -86,7 +89,7 @@ func newSiteMockServer(t *testing.T) *httptest.Server {
 		w.WriteHeader(http.StatusAccepted)
 		_ = json.NewEncoder(w).Encode(map[string]any{"id": "site-1"})
 	})
-	mux.HandleFunc("DELETE /ssp/site-service/sites/{id}", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("DELETE /ssp/sites/{id}", func(w http.ResponseWriter, r *http.Request) {
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		if !m.exists {

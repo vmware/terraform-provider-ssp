@@ -1,6 +1,11 @@
 # Testing the Terraform Provider for VMware SSP
 
-This guide covers running unit and acceptance tests for the **Terraform Provider for VMware Security Services Platform (SSP & SSPI)** (`terraform-provider-ssp`), setting up SOCKS5 proxy access for isolated testbeds, and troubleshooting common testing and diagnostic issues.
+This guide covers running unit and acceptance tests for the **Terraform Provider for VMware Security Services
+Platform (SSP)** (`terraform-provider-ssp`), setting up SOCKS5 proxy access for isolated testbeds, and
+troubleshooting common testing and diagnostic issues.
+
+For the companion SSPI appliance provider's test suite, see
+[`terraform-provider-sspi`'s testing guide](https://github.com/vmware/terraform-provider-sspi/blob/main/docs/test.md).
 
 ---
 
@@ -9,7 +14,7 @@ This guide covers running unit and acceptance tests for the **Terraform Provider
 The provider test suite consists of two main types of tests:
 
 1. **Unit Tests**: Test resource/datasource schema conversions, state mapping, and client request/response formatting against in-memory HTTP mock servers (`httptest.Server`). They execute quickly and do not require live infrastructure.
-2. **Acceptance Tests**: Run real end-to-end Terraform CRUD lifecycle operations against a live SSPI appliance (`172.16.111.4`) and/or deployed SSP platform cluster (`vxlan-vm-*.nimbus.internal`).
+2. **Acceptance Tests**: Run real end-to-end Terraform CRUD lifecycle operations against a deployed SSP platform cluster (`vxlan-vm-*.nimbus.internal`).
 
 ---
 
@@ -35,22 +40,9 @@ go test -v ./internal/... -tags=unittest -count=1
 
 ## Running Acceptance Tests
 
-Acceptance tests require network access to a live **SSPI Appliance** and/or **SSP Platform Cluster**.
+Acceptance tests require network access to a live **SSP Platform Cluster**.
 
 ### 1. Environment Variable Credentials
-
-Set the credentials and endpoints required for your target environment:
-
-#### SSPI Appliance Credentials (Installer Workflows)
-
-```shell
-export SSPI_HOST="https://172.16.111.4"
-export SSPI_USERNAME="admin"
-export SSPI_PASSWORD="your-sspi-password"
-export SSPI_INSECURE="true"
-```
-
-#### SSP Platform Credentials (Day-2 Runtime Workflows)
 
 ```shell
 export SSP_HOST="https://vxlan-vm-111-71.nimbus-tb.nimbus.internal"
@@ -59,24 +51,7 @@ export SSP_PASSWORD="your-ssp-password"
 export SSP_INSECURE="true"
 ```
 
-### 2. Testbed Resource ID Overrides
-
-Acceptance tests for existing platform resources (data sources) attempt to look up live objects. If your testbed contains pre-provisioned bundles, platforms, or vCenter providers, override the default IDs using environment variables:
-
-```shell
-# Bundle ID existing on SSPI Depot (/sspi/bundles)
-export SSP_TEST_BUNDLE_ID="6b4c85e8-930c-416f-a6da-0e25a96cf131"
-
-# Deployed Platform ID existing on SSPI (/sspi/platforms)
-export SSP_TEST_PLATFORM_ID="69a6df45-4fad-4acb-a6bc-040ce5668c90"
-
-# Registered vCenter Provider details existing on SSPI (/sspi/providers)
-export SSP_TEST_VSPHERE_PROVIDER_ID="5912b7ff-88bd-4599-9153-eb1218941ebc"
-export SSP_TEST_VSPHERE_PROVIDER_SERVER="vxlan-vm-111-128.nimbus-tb.nimbus.internal"
-export SSP_TEST_VSPHERE_PROVIDER_USER="ssp-op-712f9b5a@vsphere.local"
-```
-
-### 3. Executing Acceptance Tests
+### 2. Executing Acceptance Tests
 
 To enable acceptance testing, set `TF_ACC=1`:
 
@@ -131,24 +106,6 @@ export NO_PROXY="127.0.0.1,localhost,::1"
 | --- | --- | --- |
 | `dial tcp: lookup <hostname>: no such host` | Using standard `socks5://` scheme causing local DNS lookup for internal domain names (e.g. `.nimbus.internal`). | Change proxy protocol scheme to `socks5h://` (e.g., `ALL_PROXY="socks5h://127.0.0.1:9999"`). The `h` suffix forces DNS resolution via the remote SOCKS proxy. |
 | `socks connect tcp 127.0.0.1:9999->127.0.0.1:XXXXX: dial tcp ... connection refused` | `ALL_PROXY` environment variable routing local `httptest.Server` unit test calls into the SOCKS proxy. | Ensure `export NO_PROXY="127.0.0.1,localhost"` is set. The provider client automatically disables proxying for `127.0.0.1` and `localhost` targets. |
-| `Unexpected response status code: 404` in `TestAccBundleDataSource`, `TestAccPlatformDataSource`, or `TestAccVsphereProviderDataSource` | Hardcoded fallback UUIDs in the test suite do not exist on the current live testbed snapshot. | Query the live SSPI appliance API (`/sspi/bundles`, `/sspi/platforms`, `/sspi/providers`) using `curl` and export `SSP_TEST_BUNDLE_ID`, `SSP_TEST_PLATFORM_ID`, and `SSP_TEST_VSPHERE_PROVIDER_ID`. |
 | `Passphrase does not meet the SSP password policy` / HTTP 400 | Passphrase or password string supplied in test config fails SSP platform complexity rules. | Use a compliant password containing uppercase, lowercase, numbers, and special characters with minimum length of 15 (e.g. `SecretPassphrase123!`). |
 | `Attribute 'telemetry_collector_instance_id' expected to be set` | The platform `PUT /ssp/telemetry/config` endpoint does not echo back generated read-only fields in the response body. | The provider handles this by automatically performing a follow-up `GET` request after `PUT` to refresh state attributes. |
 | `ssh: connect to host ... port 22: Operation timed out` | Jump host IP or port 22 is blocked by local firewall or VPN routing. | Verify network route to jump host and ensure corporate VPN or host route is active. |
-
----
-
-## Querying Live Testbed Objects via SOCKS Proxy
-
-To inspect existing resources on a live testbed to obtain valid IDs for acceptance tests:
-
-```shell
-# Query SSPI Bundles
-curl -s -x socks5h://127.0.0.1:9999 -k -u admin:<password> https://<sspi_ip>/sspi/bundles
-
-# Query SSPI Platforms
-curl -s -x socks5h://127.0.0.1:9999 -k -u admin:<password> https://<sspi_ip>/sspi/platforms
-
-# Query SSPI Registered vCenter Providers
-curl -s -x socks5h://127.0.0.1:9999 -k -u admin:<password> https://<sspi_ip>/sspi/providers
-```
