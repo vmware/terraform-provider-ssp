@@ -139,15 +139,18 @@ type BackupStatusList struct {
 
 // BackupStatus summarises a single backup job.
 type BackupStatus struct {
-	ID                string `json:"id"`
-	Status            string `json:"status"`
-	BackupType        string `json:"backup_type"`
-	BackupTriggerType string `json:"backup_trigger_type,omitempty"`
-	BackupStartTime   int64  `json:"backup_start_time,omitempty"`
-	BackupEndTime     int64  `json:"backup_end_time,omitempty"`
-	Progress          int    `json:"progress,omitempty"`
-	ProgressMessage   string `json:"progress_message,omitempty"`
-	Version           string `json:"version,omitempty"`
+	ID                string   `json:"id"`
+	Status            string   `json:"status"`
+	BackupType        string   `json:"backup_type"`
+	BackupTriggerType string   `json:"backup_trigger_type,omitempty"`
+	BackupStartTime   int64    `json:"backup_start_time,omitempty"`
+	BackupEndTime     int64    `json:"backup_end_time,omitempty"`
+	Progress          int      `json:"progress,omitempty"`
+	ProgressMessage   string   `json:"progress_message,omitempty"`
+	Version           string   `json:"version,omitempty"`
+	FileSize          int64    `json:"file_size,omitempty"`
+	ErrorMessages     []string `json:"error_messages,omitempty"`
+	NoOfEntities      int      `json:"no_of_entities,omitempty"`
 }
 
 // BackupRequest represents a request to trigger an on-demand backup.
@@ -177,6 +180,7 @@ type RestoreStatus struct {
 	Progress        int      `json:"progress,omitempty"`
 	ProgressMessage string   `json:"progress_message,omitempty"`
 	ErrorMessages   []string `json:"error_messages,omitempty"`
+	NoOfEntities    int      `json:"no_of_entities,omitempty"`
 }
 
 // ── Sites ──────────────────────────────────────────────────────────────────────
@@ -340,12 +344,23 @@ type UpgradeHistoryList struct {
 
 // ClusterStatus is the response from GET /ssp/cluster/monitor/platform/status.
 type ClusterStatus struct {
-	ClusterID      string `json:"cluster_id,omitempty"`
-	ClusterName    string `json:"cluster_name,omitempty"`
-	ProductVersion string `json:"product_version,omitempty"`
-	NodeCount      int    `json:"node_count,omitempty"`
-	FormFactor     string `json:"form_factor,omitempty"`
-	Health         string `json:"health,omitempty"`
+	ClusterID          string       `json:"cluster_id,omitempty"`
+	ClusterName        string       `json:"cluster_name,omitempty"`
+	ProductVersion     string       `json:"product_version,omitempty"`
+	NodeCount          int          `json:"node_count,omitempty"`
+	FormFactor         string       `json:"form_factor,omitempty"`
+	Health             string       `json:"health,omitempty"`
+	MessageBusEndpoint string       `json:"message_bus_endpoint,omitempty"`
+	K8sVersion         string       `json:"k8s_version,omitempty"`
+	IngressURL         string       `json:"ingress_url,omitempty"`
+	NetworkDataFlow    *NetworkData `json:"network_data_flow,omitempty"`
+}
+
+// NetworkData holds network transmit/receive/total rate statistics.
+type NetworkData struct {
+	Transmit float64 `json:"transmit,omitempty"`
+	Receive  float64 `json:"receive,omitempty"`
+	Total    float64 `json:"total,omitempty"`
 }
 
 // FeatureHealthResponse is the response from GET /ssp/cluster/monitor/feature/health.
@@ -370,14 +385,17 @@ type LicenseList struct {
 
 // License holds the details of one SSP license.
 type License struct {
-	LicenseID          string `json:"license_id,omitempty"`
-	ProductDisplayName string `json:"product_display_name,omitempty"`
-	ProductFamily      string `json:"product_family,omitempty"`
-	Quantity           int    `json:"quantity,omitempty"`
-	UnitOfMeasure      string `json:"unit_of_measure,omitempty"`
-	Source             string `json:"source,omitempty"`
-	SkuCode            string `json:"sku_code,omitempty"`
-	ExpirationDate     int64  `json:"expiration_date,omitempty"`
+	LicenseID                 string `json:"license_id,omitempty"`
+	LicenseType               string `json:"license_type,omitempty"`
+	ProductDisplayName        string `json:"product_display_name,omitempty"`
+	ProductFamily             string `json:"product_family,omitempty"`
+	Quantity                  int    `json:"quantity,omitempty"`
+	UnitOfMeasure             string `json:"unit_of_measure,omitempty"`
+	Source                    string `json:"source,omitempty"`
+	SourceID                  string `json:"source_id,omitempty"`
+	SkuCode                   string `json:"sku_code,omitempty"`
+	ExpirationDate            int64  `json:"expiration_date,omitempty"`
+	ExpiryDateWithGracePeriod int64  `json:"expiry_date_with_grace_period,omitempty"`
 }
 
 // NdrConfiguration is used for GET and PUT /ssp/lcm/ndr/config.
@@ -620,7 +638,19 @@ func (c *Client) WaitForSiteReady(ctx context.Context, siteID string) error {
 			if site.Status != nil && site.Status.ConnectionStatus == "HEALTHY" {
 				return nil
 			}
-			// Unhealthy is not necessarily a hard failure; keep polling.
+			// The real SiteReadiness enum (current_state) has two genuine
+			// terminal-failure values, NOT_READY and INACTIVE; failing fast on
+			// them (rather than spinning for the full 90-minute timeout) mirrors
+			// how a 404 above is already treated as terminal. UNKNOWN,
+			// ONBOARD_IN_PROGRESS, and OFFBOARD_IN_PROGRESS are legitimate
+			// non-terminal states, so those keep polling.
+			switch site.CurrentState {
+			case "NOT_READY", "INACTIVE":
+				return fmt.Errorf("site %s reached a terminal failure state: current_state=%s", siteID, site.CurrentState)
+			}
+			// Similarly, connection_status == UNHEALTHY is not always a
+			// permanent failure on its own (current_state is the authoritative
+			// readiness signal), so it does not short-circuit the poll here.
 		}
 
 		select {

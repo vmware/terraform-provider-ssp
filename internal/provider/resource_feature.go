@@ -9,13 +9,34 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/vmware/terraform-provider-ssp/internal/provider/client"
 )
+
+// sspFeatureEnum lists every real value of the SspFeature enum
+// (apis/ssp_public_apis.yaml), used to validate the `feature` attribute.
+var sspFeatureEnum = []string{
+	"MALWARE_PREVENTION",
+	"INTELLIGENCE",
+	"NDR",
+	"BAREMETAL_SECURITY",
+	"RULE_ANALYSIS",
+	"AI_ASSISTANT_PLATFORM",
+	"AI_ASSISTANT_THREAT_DEFENSE",
+	"MALWARE_ANALYSIS_VC",
+	"SPAC",
+	"NETWORK_TRAFFIC_ANALYSIS",
+	"UPGRADE_COORDINATOR",
+	"CLOUD_CONNECTOR",
+	"METRICS",
+}
 
 // lcmMu serialises all SSP LCM lifecycle actions within a single Terraform
 // apply/destroy: the SSP platform only supports one concurrent lifecycle
@@ -44,6 +65,7 @@ type FeatureResource struct {
 type FeatureResourceModel struct {
 	ID               types.String `tfsdk:"id"`
 	Feature          types.String `tfsdk:"feature"`
+	ForceUndeploy    types.Bool   `tfsdk:"force_undeploy"`
 	OverallStatus    types.String `tfsdk:"overall_status"`
 	OverallProgress  types.Int64  `tfsdk:"overall_progress"`
 	PrecheckStatus   types.String `tfsdk:"precheck_status"`
@@ -62,9 +84,9 @@ func (r *FeatureResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 			"at a time; concurrent `ssp_feature`/`ssp_site` resources within the same\n" +
 			"`terraform apply` are serialised by the provider.\n\n" +
 			"Supported features: `MALWARE_PREVENTION`, `INTELLIGENCE`, `NDR`, `BAREMETAL_SECURITY`,\n" +
-			"`RULE_ANALYSIS`, `INTELLIGENT_ASSIST_PLATFORM`, `INTELLIGENT_ASSIST_THREAT_DEFENSE`,\n" +
+			"`RULE_ANALYSIS`, `AI_ASSISTANT_PLATFORM`, `AI_ASSISTANT_THREAT_DEFENSE`,\n" +
 			"`MALWARE_ANALYSIS_VC`, `SPAC`, `NETWORK_TRAFFIC_ANALYSIS`, `UPGRADE_COORDINATOR`,\n" +
-			"`CLOUD_CONNECTOR`.\n\n" +
+			"`CLOUD_CONNECTOR`, `METRICS`.\n\n" +
 			"Corresponds to `GET/PUT /ssp/lcm/features/{feature}` and\n" +
 			"`GET /ssp/lcm/features/{feature}/status`.",
 
@@ -77,6 +99,14 @@ func (r *FeatureResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 				Required:            true,
 				MarkdownDescription: "Name of the feature to deploy (case-sensitive).",
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
+				Validators:          []validator.String{stringvalidator.OneOf(sspFeatureEnum...)},
+			},
+			"force_undeploy": schema.BoolAttribute{
+				Optional: true,
+				Computed: true,
+				Default:  booldefault.StaticBool(false),
+				MarkdownDescription: "When `true`, `Delete` issues `action=FORCE_UNDEPLOY` instead of `action=UNDEPLOY`, " +
+					"overriding a dependent-feature block that would otherwise fail a plain undeploy. Defaults to `false`.",
 			},
 			"overall_status": schema.StringAttribute{
 				Computed:            true,
@@ -240,6 +270,11 @@ func (r *FeatureResource) Delete(ctx context.Context, req resource.DeleteRequest
 
 	feature := data.Feature.ValueString()
 
+	action := "UNDEPLOY"
+	if data.ForceUndeploy.ValueBool() {
+		action = "FORCE_UNDEPLOY"
+	}
+
 	lcmMu.Lock()
 	defer lcmMu.Unlock()
 
@@ -251,7 +286,7 @@ func (r *FeatureResource) Delete(ctx context.Context, req resource.DeleteRequest
 
 	_, err = r.client.Put(ctx, "/ssp/lcm/features/"+feature, &client.FeatureDeployment{
 		Revision: revision,
-		Action:   "UNDEPLOY",
+		Action:   action,
 	}, nil)
 	if err != nil {
 		resp.Diagnostics.AddError("Error triggering undeploy for feature "+feature, err.Error())
@@ -282,7 +317,9 @@ func (r *FeatureResource) ImportState(ctx context.Context, req resource.ImportSt
 		return
 	}
 
-	data := FeatureResourceModel{Feature: types.StringValue(feature)}
+	// force_undeploy has no server-side representation to read back; default
+	// it to false on import, matching the schema's Default for a fresh plan.
+	data := FeatureResourceModel{Feature: types.StringValue(feature), ForceUndeploy: types.BoolValue(false)}
 	mapFeatureStatusToState(&status, &data)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }

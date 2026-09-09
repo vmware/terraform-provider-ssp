@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -15,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/objectplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/vmware/terraform-provider-ssp/internal/provider/client"
 )
@@ -80,6 +82,7 @@ func (r *SiteResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				Required:            true,
 				MarkdownDescription: "Site type: `NSX_MANAGER`, `AVI`, or `SSP`.",
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
+				Validators:          []validator.String{stringvalidator.OneOf("NSX_MANAGER", "SSP", "AVI")},
 			},
 			"site_name": schema.StringAttribute{
 				Required:            true,
@@ -89,6 +92,7 @@ func (r *SiteResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 			"desired_state": schema.StringAttribute{
 				Required:            true,
 				MarkdownDescription: "Desired onboarding state: `ONBOARD` (full onboard), `PREPARE` (prechecks only), or `OFFBOARD`.",
+				Validators:          []validator.String{stringvalidator.OneOf("ONBOARD", "OFFBOARD", "PREPARE")},
 			},
 			"force": schema.BoolAttribute{
 				Optional:            true,

@@ -6,11 +6,18 @@ package provider
 import (
 	"context"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/vmware/terraform-provider-ssp/internal/provider/client"
 )
+
+var networkDataFlowAttrTypes = map[string]attr.Type{
+	"transmit": types.Float64Type,
+	"receive":  types.Float64Type,
+	"total":    types.Float64Type,
+}
 
 var _ datasource.DataSource = &PlatformStatusDataSource{}
 
@@ -23,12 +30,16 @@ type PlatformStatusDataSource struct {
 }
 
 type PlatformStatusDataSourceModel struct {
-	ClusterID      types.String `tfsdk:"cluster_id"`
-	ClusterName    types.String `tfsdk:"cluster_name"`
-	ProductVersion types.String `tfsdk:"product_version"`
-	NodeCount      types.Int64  `tfsdk:"node_count"`
-	FormFactor     types.String `tfsdk:"form_factor"`
-	Health         types.String `tfsdk:"health"`
+	ClusterID          types.String `tfsdk:"cluster_id"`
+	ClusterName        types.String `tfsdk:"cluster_name"`
+	ProductVersion     types.String `tfsdk:"product_version"`
+	NodeCount          types.Int64  `tfsdk:"node_count"`
+	FormFactor         types.String `tfsdk:"form_factor"`
+	Health             types.String `tfsdk:"health"`
+	MessageBusEndpoint types.String `tfsdk:"message_bus_endpoint"`
+	K8sVersion         types.String `tfsdk:"k8s_version"`
+	IngressURL         types.String `tfsdk:"ingress_url"`
+	NetworkDataFlow    types.Object `tfsdk:"network_data_flow"`
 }
 
 func (d *PlatformStatusDataSource) Metadata(ctx context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
@@ -64,6 +75,27 @@ func (d *PlatformStatusDataSource) Schema(ctx context.Context, req datasource.Sc
 				Computed:            true,
 				MarkdownDescription: "Overall cluster health: `UP`, `PARTIALLY_UP`, or `DOWN`.",
 			},
+			"message_bus_endpoint": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Endpoint of the platform message bus (FQDN:Port or IP:Port).",
+			},
+			"k8s_version": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Version of the underlying Kubernetes infrastructure the platform is built on.",
+			},
+			"ingress_url": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Endpoint for cluster ingress.",
+			},
+			"network_data_flow": schema.SingleNestedAttribute{
+				Computed:            true,
+				MarkdownDescription: "Network data flow statistics for the cluster.",
+				Attributes: map[string]schema.Attribute{
+					"transmit": schema.Float64Attribute{Computed: true, MarkdownDescription: "Network data transmit rate."},
+					"receive":  schema.Float64Attribute{Computed: true, MarkdownDescription: "Network data receive rate."},
+					"total":    schema.Float64Attribute{Computed: true, MarkdownDescription: "Total of transmit and receive data rates."},
+				},
+			},
 		},
 	}
 }
@@ -96,6 +128,21 @@ func (d *PlatformStatusDataSource) Read(ctx context.Context, req datasource.Read
 	data.NodeCount = types.Int64Value(int64(status.NodeCount))
 	data.FormFactor = types.StringValue(status.FormFactor)
 	data.Health = types.StringValue(status.Health)
+	data.MessageBusEndpoint = types.StringValue(status.MessageBusEndpoint)
+	data.K8sVersion = types.StringValue(status.K8sVersion)
+	data.IngressURL = types.StringValue(status.IngressURL)
+
+	if status.NetworkDataFlow != nil {
+		networkObj, d := types.ObjectValue(networkDataFlowAttrTypes, map[string]attr.Value{
+			"transmit": types.Float64Value(status.NetworkDataFlow.Transmit),
+			"receive":  types.Float64Value(status.NetworkDataFlow.Receive),
+			"total":    types.Float64Value(status.NetworkDataFlow.Total),
+		})
+		resp.Diagnostics.Append(d...)
+		data.NetworkDataFlow = networkObj
+	} else {
+		data.NetworkDataFlow = types.ObjectNull(networkDataFlowAttrTypes)
+	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }

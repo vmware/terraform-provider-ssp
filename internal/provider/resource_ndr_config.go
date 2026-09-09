@@ -29,9 +29,11 @@ type NdrConfigResource struct {
 }
 
 type NdrConfigResourceModel struct {
-	ID          types.String `tfsdk:"id"`
-	DataSharing types.Bool   `tfsdk:"data_sharing"`
-	Revision    types.Int64  `tfsdk:"revision"`
+	ID            types.String `tfsdk:"id"`
+	DataSharing   types.Bool   `tfsdk:"data_sharing"`
+	Revision      types.Int64  `tfsdk:"revision"`
+	ConfigStatus  types.String `tfsdk:"config_status"`
+	ConfigMessage types.String `tfsdk:"config_message"`
 }
 
 func (r *NdrConfigResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -61,8 +63,30 @@ func (r *NdrConfigResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 				Computed:            true,
 				MarkdownDescription: "Revision number maintained by the SSP backend.",
 			},
+			"config_status": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Configuration status from the platform. One of `NOT_CONFIGURED`, `DEPLOYMENT_REQUIRED`, or `CONFIGURATION_APPLIED`.",
+			},
+			"config_message": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Informational message accompanying `config_status`.",
+			},
 		},
 	}
+}
+
+// readNdrConfigStatus fetches GET /ssp/lcm/ndr/config/status and populates
+// config_status/config_message. Reuses client.CloudConnectorConfigurationStatus
+// since that sibling config resource's status response has the identical
+// {status, message} shape.
+func (r *NdrConfigResource) readNdrConfigStatus(ctx context.Context, data *NdrConfigResourceModel) error {
+	var status client.CloudConnectorConfigurationStatus
+	if _, err := r.client.Get(ctx, "/ssp/lcm/ndr/config/status", &status); err != nil {
+		return err
+	}
+	data.ConfigStatus = types.StringValue(status.Status)
+	data.ConfigMessage = types.StringValue(status.Message)
+	return nil
 }
 
 func (r *NdrConfigResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -119,6 +143,10 @@ func (r *NdrConfigResource) Create(ctx context.Context, req resource.CreateReque
 	data.ID = types.StringValue("singleton")
 	data.DataSharing = types.BoolValue(out.DataSharing)
 	data.Revision = types.Int64Value(int64(out.Revision))
+	if err := r.readNdrConfigStatus(ctx, &data); err != nil {
+		resp.Diagnostics.AddError("Error reading NDR configuration status", err.Error())
+		return
+	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -144,6 +172,10 @@ func (r *NdrConfigResource) Read(ctx context.Context, req resource.ReadRequest, 
 	data.ID = types.StringValue("singleton")
 	data.DataSharing = types.BoolValue(out.DataSharing)
 	data.Revision = types.Int64Value(int64(out.Revision))
+	if err := r.readNdrConfigStatus(ctx, &data); err != nil {
+		resp.Diagnostics.AddError("Error reading NDR configuration status", err.Error())
+		return
+	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -188,6 +220,10 @@ func (r *NdrConfigResource) Update(ctx context.Context, req resource.UpdateReque
 	plan.ID = types.StringValue("singleton")
 	plan.DataSharing = types.BoolValue(out.DataSharing)
 	plan.Revision = types.Int64Value(int64(out.Revision))
+	if err := r.readNdrConfigStatus(ctx, &plan); err != nil {
+		resp.Diagnostics.AddError("Error reading NDR configuration status", err.Error())
+		return
+	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }

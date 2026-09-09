@@ -20,12 +20,20 @@ func newPlatformStatusDataSourceMockServer(t *testing.T) *httptest.Server {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"cluster_id":      "cluster-uuid-999",
-			"cluster_name":    "Prod-SSP-Cluster",
-			"product_version": "5.2.0",
-			"node_count":      3,
-			"form_factor":     "MEDIUM",
-			"health":          "UP",
+			"cluster_id":           "cluster-uuid-999",
+			"cluster_name":         "Prod-SSP-Cluster",
+			"product_version":      "5.2.0",
+			"node_count":           3,
+			"form_factor":          "MEDIUM",
+			"health":               "UP",
+			"message_bus_endpoint": "messagebus.example.com:9092",
+			"k8s_version":          "1.24.6",
+			"ingress_url":          "ssp.example.com:443",
+			"network_data_flow": map[string]any{
+				"transmit": 34.7,
+				"receive":  24.2,
+				"total":    58.9,
+			},
 		})
 	})
 
@@ -51,6 +59,12 @@ data "ssp_platform_status" "test" {}
 					resource.TestCheckResourceAttr("data.ssp_platform_status.test", "node_count", "3"),
 					resource.TestCheckResourceAttr("data.ssp_platform_status.test", "form_factor", "MEDIUM"),
 					resource.TestCheckResourceAttr("data.ssp_platform_status.test", "health", "UP"),
+					resource.TestCheckResourceAttr("data.ssp_platform_status.test", "message_bus_endpoint", "messagebus.example.com:9092"),
+					resource.TestCheckResourceAttr("data.ssp_platform_status.test", "k8s_version", "1.24.6"),
+					resource.TestCheckResourceAttr("data.ssp_platform_status.test", "ingress_url", "ssp.example.com:443"),
+					resource.TestCheckResourceAttr("data.ssp_platform_status.test", "network_data_flow.transmit", "34.7"),
+					resource.TestCheckResourceAttr("data.ssp_platform_status.test", "network_data_flow.receive", "24.2"),
+					resource.TestCheckResourceAttr("data.ssp_platform_status.test", "network_data_flow.total", "58.9"),
 				),
 			},
 		},
