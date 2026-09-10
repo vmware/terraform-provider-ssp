@@ -98,6 +98,11 @@ labs. Comments from non-collaborators (e.g. on a fork PR) are ignored before any
 touched. Jenkins reports the outcome back onto the pull request as a **"Jenkins Acceptance Tests"** check,
 linking to the full console log and JUnit results.
 
+**TODO:** this isn't wired up to a real Jenkins yet -- see
+[`ci/jenkins/DEPLOYMENT.md`](ci/jenkins/DEPLOYMENT.md) for the one-time
+setup runbook (jump host, agent, credentials, Pipeline job, GitHub
+secrets).
+
 ---
 
 ## SOCKS5 Proxy & Testbed Connectivity Setup

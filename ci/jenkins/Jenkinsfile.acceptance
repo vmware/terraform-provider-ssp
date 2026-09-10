@@ -10,9 +10,13 @@
 // https://jenkins-nsxqe.devops.broadcom.net/. TODO(Phase 1): confirm it has
 // (or provision) an agent labeled "ssp-lab" with SOCKS5/VPN reachability to
 // the SSP Nimbus lab specifically -- an "nsxqe"-named node may currently
-// only have NSX-QE lab access, not SSP.
+// only have NSX-QE lab access, not SSP. TODO: run through
+// ci/jenkins/DEPLOYMENT.md, which has the full step-by-step runbook for
+// everything in this comment block (jump host, agent, credentials, job,
+// GitHub secrets, smoke test) -- confirmed nothing exists yet.
 //
-// One-time setup this pipeline assumes (see the CI plan, Phase 1/2):
+// One-time setup this pipeline assumes (see the CI plan, Phase 1/2, and
+// the runbook in ci/jenkins/DEPLOYMENT.md):
 //   Agent label:  ssp-lab              (a Jenkins agent with SOCKS5/VPN
 //                                        reachability to the Nimbus/NSX labs)
 //   Tools on PATH: go, jq, ssh
@@ -40,7 +44,8 @@ pipeline {
         REPO_OWNER  = 'vmware'
         REPO_NAME   = 'terraform-provider-ssp'
         CHECK_NAME  = 'Jenkins Acceptance Tests'
-        // TODO(Phase 1): point this at the real Nimbus/lab jump host.
+        // TODO(Phase 1): point this at the real Nimbus/lab jump host --
+        // see ci/jenkins/DEPLOYMENT.md Phase 1/2.
         LAB_JUMPHOST = 'CHANGEME.nimbus.internal'
     }
 

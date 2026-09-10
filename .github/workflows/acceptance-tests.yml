@@ -18,7 +18,9 @@ name: Acceptance Tests (Jenkins)
 # this workflow will still fail at the "Trigger Jenkins job" step until
 # JENKINS_USER and JENKINS_API_TOKEN are added as repo secrets, and until
 # the Jenkins-side github-checks-token credential can reach the GitHub
-# Checks API -- see the CI plan for the full Phase 1/2/5 checklist.
+# Checks API -- see the CI plan for the full Phase 1/2/5 checklist, and
+# ci/jenkins/DEPLOYMENT.md for the step-by-step runbook (confirmed as of
+# this writing: no jump host, agent, credentials, or job exist yet).
 
 on:
   issue_comment:
