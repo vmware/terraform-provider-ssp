@@ -1,0 +1,161 @@
+---
+name: API Spec Drift Check
+
+# Detects drift between the committed OpenAPI spec (apis/ssp_public_apis.yaml)
+# and a newer candidate spec, however that candidate arrives:
+#   - pull_request: someone commits an updated spec directly -> diff against
+#     the PR base and post the report as a PR comment.
+#   - workflow_dispatch: a maintainer who obtained a new spec (portal
+#     download, appliance export, etc.) points this at it manually via the
+#     spec_url input.
+# TODO(Phase D0): confirm whether the Broadcom Developer Portal or the
+# appliance itself exposes a stable, fetchable spec URL. Until then, the
+# schedule below stays a permanent no-op (no SPEC_URL variable set) --
+# this workflow still works via the pull_request/workflow_dispatch paths.
+#   - schedule (weekly): fetches from the SPEC_URL repository variable if one
+#     is configured. No-ops harmlessly if SPEC_URL is unset -- once a stable
+#     spec URL is confirmed, setting that variable is all it takes to turn on
+#     fully automatic weekly checking, no workflow changes needed.
+#
+# Outside a pull request (i.e. schedule/workflow_dispatch), drift also opens
+# (or updates) a single tracking issue labeled "api-drift" and pings the
+# maintainer team, since this client is hand-written -- there's nothing to
+# auto-regenerate, a human has to update client.go by hand.
+#
+# Note: for pull_request events triggered by a fork, GITHUB_TOKEN is
+# read-only regardless of the permissions block below, so the PR-comment
+# step will simply fail to post on fork PRs; the drift report still shows up
+# in the job summary either way.
+
+on:
+  pull_request:
+    paths:
+      - 'apis/*.yaml'
+  workflow_dispatch:
+    inputs:
+      spec_url:
+        description: 'URL of a candidate spec to diff against the committed one'
+        required: false
+        default: ''
+  schedule:
+    - cron: '0 3 * * 1'
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+env:
+  SPEC_PATH: apis/ssp_public_apis.yaml
+  MAINTAINER_TEAM: '@vmware/terraform-provider-ssp-sspi-maintainers'
+
+jobs:
+  spec-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install --quiet pyyaml
+
+      - name: Resolve candidate spec
+        id: resolve
+        run: |
+          set -euo pipefail
+          case "${{ github.event_name }}" in
+            pull_request)
+              git show "${{ github.event.pull_request.base.sha }}:${SPEC_PATH}" > /tmp/old_spec.yaml
+              cp "${SPEC_PATH}" /tmp/new_spec.yaml
+              ;;
+            workflow_dispatch)
+              if [ -z "${{ github.event.inputs.spec_url }}" ]; then
+                echo "::notice title=Spec drift check skipped::No spec_url input was provided."
+                echo "skip=true" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              cp "${SPEC_PATH}" /tmp/old_spec.yaml
+              curl --fail --silent --show-error -o /tmp/new_spec.yaml "${{ github.event.inputs.spec_url }}"
+              ;;
+            schedule)
+              if [ -z "${{ vars.SPEC_URL }}" ]; then
+                echo "::notice title=Spec drift check skipped::SPEC_URL repository variable is not set; nothing to fetch automatically yet."
+                echo "skip=true" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              cp "${SPEC_PATH}" /tmp/old_spec.yaml
+              curl --fail --silent --show-error -o /tmp/new_spec.yaml "${{ vars.SPEC_URL }}"
+              ;;
+          esac
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Run spec-diff
+        if: steps.resolve.outputs.skip != 'true'
+        id: diff
+        run: |
+          set -uo pipefail
+          python3 scripts/spec-diff.py /tmp/old_spec.yaml /tmp/new_spec.yaml --format markdown > drift-report.md
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          cat drift-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Comment on pull request
+        if: steps.resolve.outputs.skip != 'true' && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs')
+            const body = fs.readFileSync('drift-report.md', 'utf8')
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            })
+
+      - name: Open or update the drift-tracking issue
+        if: steps.resolve.outputs.skip != 'true' && github.event_name != 'pull_request' && steps.diff.outputs.exit_code != '0'
+        uses: actions/github-script@v7
+        env:
+          MAINTAINER_TEAM: ${{ env.MAINTAINER_TEAM }}
+        with:
+          script: |
+            const fs = require('fs')
+            const label = 'api-drift'
+            const body = fs.readFileSync('drift-report.md', 'utf8') + `\n\ncc ${process.env.MAINTAINER_TEAM}`
+
+            const open = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: label,
+            })
+
+            if (open.data.length > 0) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: open.data[0].number,
+                body,
+              })
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: 'SSP API spec drift detected',
+                body,
+                labels: [label],
+              })
+            }
+
+      - name: Fail on drift outside pull requests
+        if: steps.resolve.outputs.skip != 'true' && github.event_name != 'pull_request' && steps.diff.outputs.exit_code != '0'
+        run: |
+          echo "::error title=API spec drift detected::See the job summary and the api-drift issue for details."
+          exit 1

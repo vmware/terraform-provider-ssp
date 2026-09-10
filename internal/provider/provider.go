@@ -118,6 +118,18 @@ func (p *SspProvider) Configure(ctx context.Context, req provider.ConfigureReque
 	resp.ResourceData = clients
 }
 
+// TODO(acceptance-test backlog): the following resources have unit test
+// coverage only, no TestAcc* lifecycle coverage against a live SSP
+// cluster: ssp_backup, ssp_backup_config, ssp_malware_prevention_config,
+// ssp_readiness, ssp_recurring_backup_config, ssp_restore. Same for 9 of
+// the 10 data sources (all except data.ssp_site): data.ssp_backup_status,
+// data.ssp_feature, data.ssp_feature_health, data.ssp_licenses,
+// data.ssp_platform_status, data.ssp_sensors, data.ssp_sites,
+// data.ssp_upgrade_available_versions, data.ssp_upgrade_history.
+// Deliberately deferred (framework-only scope), tracked here rather than
+// silently forgotten. Add a sweeper (see nsxt's Sweep* pattern) before any
+// of these gain real create/destroy lifecycle tests, so a failed run
+// doesn't leak objects in the shared lab.
 func (p *SspProvider) Resources(ctx context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
 		NewReadinessResource,

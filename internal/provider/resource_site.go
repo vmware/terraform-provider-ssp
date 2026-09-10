@@ -182,6 +182,8 @@ func (r *SiteResource) Create(ctx context.Context, req resource.CreateRequest, r
 		return
 	}
 
+	warnOnVersionCompat(ctx, &resp.Diagnostics, r.client, "ssp_site")
+
 	lcmMu.Lock()
 	defer lcmMu.Unlock()
 
@@ -265,6 +267,8 @@ func (r *SiteResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	warnOnVersionCompat(ctx, &resp.Diagnostics, r.client, "ssp_site")
 
 	lcmMu.Lock()
 	defer lcmMu.Unlock()

@@ -1,0 +1,27 @@
+# Single source of truth for SSP-platform version compatibility.
+#
+# docs/guides/version-compatibility.md and the "Platform compatibility"
+# section of README.md are generated from this file -- edit this file, then
+# run `make docs-compat` to regenerate both. CI (.github/workflows/docs-lint.yml)
+# re-runs the generator and fails if the committed docs don't match, so this
+# file stays the only place that needs editing.
+#
+# `attributes` records resource-attribute pairs that require a newer
+# platform version than the baseline below. It starts empty: no such
+# per-attribute constraint has been confirmed against a real SSP release
+# yet. Add an entry here (and re-run `make docs-compat`) only once one is
+# confirmed against real SSP release notes/behavior -- do not guess at
+# version numbers.
+provider_version: "1.0.0"
+
+platform:
+  # Lowest SSP platform version this provider release is known to work against.
+  min_supported: "5.2.0"
+  # SSP platform version this provider release was developed and tested against.
+  tested_against: "5.2.0"
+
+# TODO: populate as real version-sensitive attributes are confirmed against
+# actual SSP release notes/behavior. Empty today -- see warnOnVersionCompat
+# in internal/provider/compat_check.go for how an entry here activates a
+# live advisory check.
+attributes: []

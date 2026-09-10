@@ -24,3 +24,16 @@ jobs:
             docs/data-sources/*.md
             docs/guides/*.md
             docs/resources/*.md
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check version-compatibility docs are in sync
+        run: |
+          set -euo pipefail
+          pip install --quiet pyyaml
+          make docs-compat
+          git diff --exit-code -- docs/guides/version-compatibility.md README.md || {
+            echo "::error title=Compatibility docs out of sync::docs/guides/version-compatibility.md and/or README.md don't match internal/compat/compatibility.yaml. Run 'make docs-compat' and commit the result."
+            exit 1
+          }

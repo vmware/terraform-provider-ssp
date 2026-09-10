@@ -1,5 +1,6 @@
 TEST?=$$(go list ./...)
 GOFMT_FILES?=$$(find . -name '*.go')
+TESTARGS?=
 PKG_NAME=ssp
 GIT_COMMIT=$$(git rev-list -1 HEAD 2>/dev/null || echo "unknown")
 BUILD_PATH=$$(go env GOPATH)
@@ -11,6 +12,7 @@ default: build
 tools:
 	GO111MODULE=on go install -mod=mod github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
 	GO111MODULE=on go install -mod=mod github.com/katbyte/terrafmt
+	GO111MODULE=on go install -mod=mod github.com/jstemmer/go-junit-report/v2@v2.1.0
 
 build: fmtcheck
 	mkdir -p $(DIST_DIR)
@@ -21,6 +23,13 @@ test: fmtcheck
 
 testacc: fmtcheck
 	GO111MODULE=on TF_ACC=1 go test ./... -v -count=1 -parallel=4
+
+# testacc-ci is the entry point used by the Jenkins acceptance pipeline
+# (ci/jenkins/Jenkinsfile.acceptance): same run as `testacc`, but bounded by
+# a timeout and converted to JUnit XML for Jenkins' Test Result Trend.
+testacc-ci: fmtcheck
+	mkdir -p test-results
+	GO111MODULE=on TF_ACC=1 go test ./... -v -count=1 -parallel=4 -timeout=180m $(TESTARGS) 2>&1 | tee test-results/testacc.log | go-junit-report -set-exit-code > test-results/junit.xml
 
 vet:
 	@echo "go vet ."
@@ -55,4 +64,12 @@ docs-lint-fix:
 	@echo "==> Fixing Markdown docs lint..."
 	markdownlint-cli2 "docs/**/*.md" --config ".markdownlint.jsonc" --fix
 
-.PHONY: build test testacc vet fmt fmtcheck errcheck test-unit generate docs-lint docs-lint-fix tools default
+# docs-compat regenerates docs/guides/version-compatibility.md and the
+# generated section of README.md from internal/compat/compatibility.yaml.
+# CI (.github/workflows/docs-lint.yml) re-runs this and fails if the
+# committed docs don't match, so compatibility.yaml stays the single
+# source of truth.
+docs-compat:
+	python3 scripts/gen-compat-docs.py ssp
+
+.PHONY: build test testacc testacc-ci vet fmt fmtcheck errcheck test-unit generate docs-lint docs-lint-fix docs-compat tools default

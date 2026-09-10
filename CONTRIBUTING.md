@@ -84,6 +84,8 @@ and commits.
 - Ensure unit tests pass (`go test ./...`).
 - Format all code with `gofmt -s`.
 - Update documentation in `docs/` as necessary (`make docs-lint-fix`).
+- If your change touches resource/data-source behavior, ask a maintainer to comment `/run-acceptance-tests`
+  on the PR to run the real acceptance suite against the SSP lab via Jenkins (see [`TESTING.md`](TESTING.md)).
 
 ## Reporting Bugs and Creating Issues
 

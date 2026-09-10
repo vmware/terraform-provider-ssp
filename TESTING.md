@@ -75,6 +75,31 @@ TF_ACC=1 go test -v ./internal/provider -run=TestAccSensorRegistrationTokenResou
 
 ---
 
+## Running Acceptance Tests via CI (Jenkins)
+
+Because acceptance tests need real lab credentials and can run for a long time, they are **not** run
+automatically on every push or pull request. A maintainer (repo owner, member, or collaborator) triggers a
+run on-demand by commenting on the pull request:
+
+```text
+/run-acceptance-tests
+```
+
+Optionally scope the run to specific tests, the same way you'd pass `TESTARGS` locally:
+
+```text
+/run-acceptance-tests -run=TestAccSiteResource
+```
+
+This comment is picked up by `.github/workflows/acceptance-tests.yml`, which verifies the commenter's
+association with the repo, resolves the pull request's head commit, and triggers the `ssp-acceptance-tests`
+Jenkins job (`ci/jenkins/Jenkinsfile.acceptance`) — the job that actually has network access to the SSP/NSX
+labs. Comments from non-collaborators (e.g. on a fork PR) are ignored before any secret or Jenkins call is
+touched. Jenkins reports the outcome back onto the pull request as a **"Jenkins Acceptance Tests"** check,
+linking to the full console log and JUnit results.
+
+---
+
 ## SOCKS5 Proxy & Testbed Connectivity Setup
 
 When running acceptance tests against isolated lab environments (e.g., Nimbus testbeds accessible only via a jump host), route HTTP traffic through an SSH SOCKS5 proxy tunnel.

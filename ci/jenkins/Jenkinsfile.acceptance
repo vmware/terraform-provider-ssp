@@ -1,0 +1,160 @@
+// Acceptance-test pipeline for terraform-provider-ssp, triggered by
+// .github/workflows/acceptance-tests.yml via a maintainer commenting
+// "/run-acceptance-tests" on a pull request.
+//
+// Configured as a Jenkins Pipeline job "ssp-acceptance-tests" with
+// "Pipeline script from SCM" pointing at this file, so pipeline changes
+// ship with the code they test.
+//
+// TODO(Phase 0): confirm whether a shared Jenkins instance with lab network
+// access already exists, or whether one needs to be stood up net-new --
+// this decides whether Phase 1/2 below is "wire onto existing Jenkins" or
+// a multi-week infra project.
+//
+// One-time setup this pipeline assumes (see the CI plan, Phase 1/2):
+//   Agent label:  ssp-lab              (a Jenkins agent with SOCKS5/VPN
+//                                        reachability to the Nimbus/NSX labs)
+//   Tools on PATH: go, jq, ssh
+//   TODO(Phase 2): create these in the Jenkins credentials store -- IDs
+//   below are placeholders, rename to match whatever your Jenkins admin
+//   provisions:
+//     ssp-acc-host / ssp-acc-username / ssp-acc-password / ssp-acc-insecure
+//     nsx-acc-host / nsx-acc-username / nsx-acc-password / nsx-acc-certificate  (only needed for ssp_site tests)
+//     lab-jumphost-ssh      (SSH private key + username for the SOCKS5 jump host)
+//     github-checks-token   (GitHub App installation token or fine-grained PAT
+//                            with "checks: write" on this repo)
+//   Environment: LAB_JUMPHOST below, once the jump host exists.
+
+pipeline {
+    agent { label 'ssp-lab' }
+
+    parameters {
+        string(name: 'PR_NUMBER', defaultValue: '', description: 'Pull request number that requested this run')
+        string(name: 'HEAD_SHA', defaultValue: '', description: 'Head commit SHA of the pull request to test')
+        string(name: 'TESTARGS', defaultValue: '', description: 'Optional go test filter, e.g. -run=TestAccSiteResource')
+    }
+
+    environment {
+        GO111MODULE = 'on'
+        REPO_OWNER  = 'vmware'
+        REPO_NAME   = 'terraform-provider-ssp'
+        CHECK_NAME  = 'Jenkins Acceptance Tests'
+        // TODO(Phase 1): point this at the real Nimbus/lab jump host.
+        LAB_JUMPHOST = 'CHANGEME.nimbus.internal'
+    }
+
+    options {
+        timeout(time: 6, unit: 'HOURS')
+        disableConcurrentBuilds()
+    }
+
+    stages {
+        stage('Checkout PR head') {
+            steps {
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: params.HEAD_SHA]],
+                    userRemoteConfigs: [[
+                        url: "https://github.com/${REPO_OWNER}/${REPO_NAME}.git",
+                        refspec: "+refs/pull/${params.PR_NUMBER}/head:refs/remotes/origin/pr/${params.PR_NUMBER}",
+                    ]],
+                ])
+            }
+        }
+
+        stage('Create pending GitHub check') {
+            steps {
+                withCredentials([string(credentialsId: 'github-checks-token', variable: 'GH_TOKEN')]) {
+                    script {
+                        // Built via JsonOutput (not a hand-escaped string) so
+                        // there's no ambiguity in how special characters in
+                        // CHECK_NAME/BUILD_URL get escaped into the payload.
+                        def payload = groovy.json.JsonOutput.toJson([
+                            name       : env.CHECK_NAME,
+                            head_sha   : params.HEAD_SHA,
+                            status     : 'in_progress',
+                            details_url: env.BUILD_URL,
+                        ])
+                        writeFile file: 'check_payload.json', text: payload
+
+                        def response = sh(script: '''
+                            curl --fail --silent --show-error \
+                              -H "Authorization: token $GH_TOKEN" \
+                              -H "Accept: application/vnd.github+json" \
+                              "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/check-runs" \
+                              -d @check_payload.json
+                        ''', returnStdout: true).trim()
+                        env.CHECK_RUN_ID = sh(script: "echo '${response}' | jq -r .id", returnStdout: true).trim()
+                    }
+                }
+            }
+        }
+
+        stage('Open lab SOCKS5 tunnel') {
+            steps {
+                withCredentials([sshUserPrivateKey(credentialsId: 'lab-jumphost-ssh', keyFileVariable: 'JUMPHOST_KEY', usernameVariable: 'JUMPHOST_USER')]) {
+                    sh 'ssh -i "$JUMPHOST_KEY" -o StrictHostKeyChecking=accept-new -f -N -D 9999 "$JUMPHOST_USER@${LAB_JUMPHOST}"'
+                }
+            }
+        }
+
+        stage('Run acceptance tests') {
+            environment {
+                ALL_PROXY   = 'socks5h://127.0.0.1:9999'
+                HTTPS_PROXY = 'socks5h://127.0.0.1:9999'
+                HTTP_PROXY  = 'socks5h://127.0.0.1:9999'
+                NO_PROXY    = '127.0.0.1,localhost,::1'
+            }
+            steps {
+                withCredentials([
+                    string(credentialsId: 'ssp-acc-host', variable: 'SSP_HOST'),
+                    string(credentialsId: 'ssp-acc-username', variable: 'SSP_USERNAME'),
+                    string(credentialsId: 'ssp-acc-password', variable: 'SSP_PASSWORD'),
+                    string(credentialsId: 'ssp-acc-insecure', variable: 'SSP_INSECURE'),
+                    string(credentialsId: 'nsx-acc-host', variable: 'NSX_HOST'),
+                    string(credentialsId: 'nsx-acc-username', variable: 'NSX_USERNAME'),
+                    string(credentialsId: 'nsx-acc-password', variable: 'NSX_PASSWORD'),
+                    string(credentialsId: 'nsx-acc-certificate', variable: 'NSX_CERTIFICATE'),
+                ]) {
+                    sh 'make testacc-ci TESTARGS="${TESTARGS}"'
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            junit testResults: 'test-results/junit.xml', allowEmptyResults: true
+            archiveArtifacts artifacts: 'test-results/**', allowEmptyArchive: true
+        }
+        success {
+            updateGithubCheck('success', 'All acceptance tests passed.')
+        }
+        unstable {
+            updateGithubCheck('failure', 'One or more acceptance tests failed — see JUnit results.')
+        }
+        failure {
+            updateGithubCheck('failure', 'Acceptance run errored before completing — see console log.')
+        }
+    }
+}
+
+void updateGithubCheck(String conclusion, String summary) {
+    withCredentials([string(credentialsId: 'github-checks-token', variable: 'GH_TOKEN')]) {
+        def payload = groovy.json.JsonOutput.toJson([
+            status    : 'completed',
+            conclusion: conclusion,
+            output    : [title: env.CHECK_NAME, summary: summary],
+        ])
+        writeFile file: 'check_update_payload.json', text: payload
+
+        sh '''
+            curl --fail --silent --show-error \
+              -H "Authorization: token $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -X PATCH \
+              "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/check-runs/${CHECK_RUN_ID}" \
+              -d @check_update_payload.json
+        '''
+    }
+}

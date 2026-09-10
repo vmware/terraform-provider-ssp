@@ -1,0 +1,103 @@
+---
+name: Acceptance Tests (Jenkins)
+
+# Maintainers trigger a real acceptance-test run against the live SSP lab by
+# commenting "/run-acceptance-tests" (optionally "/run-acceptance-tests -run=TestAccSiteResource")
+# on a pull request. This workflow only ever resolves the PR head SHA and
+# calls the Jenkins job "ssp-acceptance-tests" — it never checks out PR code
+# and never runs untrusted input, so lab credentials stay out of reach of
+# fork PRs. Jenkins does the actual test run and reports a "Jenkins
+# Acceptance Tests" check back onto the PR when it finishes.
+#
+# TODO(Phase 5): this workflow will fail at the "Trigger Jenkins job" step
+# until JENKINS_URL, JENKINS_USER, and JENKINS_API_TOKEN are added as repo
+# secrets, and until the Jenkins-side github-checks-token credential (see
+# ci/jenkins/Jenkinsfile.acceptance) can actually reach the GitHub Checks
+# API -- see the CI plan for Phase 0-2/5 on provisioning the Jenkins side.
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: acceptance-tests-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  trigger-jenkins:
+    if: >
+      github.event.issue.pull_request != null &&
+      startsWith(github.event.comment.body, '/run-acceptance-tests') &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve pull request head SHA
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.issue.number,
+            })
+
+            // The author_association check above only gates *who* can
+            // trigger a run -- it says nothing about *whose code* Jenkins
+            // is about to check out and run with real SSP_*/NSX_* lab
+            // credentials. Refuse fork PRs outright: a malicious
+            // Makefile/test change in an untrusted fork could exfiltrate
+            // those credentials the moment Jenkins runs `make testacc-ci`
+            // against it, even if only a trusted collaborator's comment
+            // triggered the run.
+            if (pr.data.head.repo === null || pr.data.head.repo.full_name !== pr.data.base.repo.full_name) {
+              core.setFailed(
+                'Refusing to run acceptance tests against a fork pull request -- Jenkins would execute that ' +
+                'PR\'s code with real lab credentials. Merge the trusted changes into a same-repo branch first.'
+              )
+              return
+            }
+
+            core.setOutput('sha', pr.data.head.sha)
+            core.setOutput('number', String(pr.data.number))
+
+      - name: Parse optional TESTARGS from comment
+        id: args
+        env:
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: |
+          set -euo pipefail
+          testargs=$(printf '%s' "$COMMENT_BODY" | sed -n 's#^/run-acceptance-tests[[:space:]]*##p' | head -n1)
+          echo "testargs=${testargs}" >> "$GITHUB_OUTPUT"
+
+      - name: Trigger Jenkins job
+        env:
+          JENKINS_URL: ${{ secrets.JENKINS_URL }}
+          JENKINS_USER: ${{ secrets.JENKINS_USER }}
+          JENKINS_API_TOKEN: ${{ secrets.JENKINS_API_TOKEN }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          HEAD_SHA: ${{ steps.pr.outputs.sha }}
+          TESTARGS: ${{ steps.args.outputs.testargs }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error \
+            --user "${JENKINS_USER}:${JENKINS_API_TOKEN}" \
+            "${JENKINS_URL}/job/ssp-acceptance-tests/buildWithParameters" \
+            --data-urlencode "PR_NUMBER=${PR_NUMBER}" \
+            --data-urlencode "HEAD_SHA=${HEAD_SHA}" \
+            --data-urlencode "TESTARGS=${TESTARGS}"
+
+      - name: Acknowledge on the PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+              body: `Acceptance run requested against \`${{ steps.pr.outputs.sha }}\`. Jenkins will report a "Jenkins Acceptance Tests" check on this PR once it completes.`,
+            })

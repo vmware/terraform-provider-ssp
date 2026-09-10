@@ -914,6 +914,17 @@ func (c *Client) DeleteWithBody(ctx context.Context, path string, body interface
 	return status, err
 }
 
+// GetPlatformVersion fetches GET /ssp/cluster/monitor/platform/status and
+// returns the cluster's product_version, for the advisory version-compatibility
+// checks in internal/compat.
+func (c *Client) GetPlatformVersion(ctx context.Context) (string, error) {
+	var status ClusterStatus
+	if _, err := c.Get(ctx, "/ssp/cluster/monitor/platform/status", &status); err != nil {
+		return "", fmt.Errorf("reading platform status: %w", err)
+	}
+	return status.ProductVersion, nil
+}
+
 // WaitForSSPAPIReady polls GET /ssp/cluster/monitor/platform/status with provider
 // credentials until a successful (2xx) response is received, confirming the SSP
 // REST API is fully initialised. Retries every 30 s up to the given timeout.

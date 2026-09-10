@@ -1,1 +1,7 @@
 * @vmware/terraform-provider-ssp-sspi-maintainers
+
+# API-contract changes (the vendored OpenAPI spec and the client built from
+# it) get routed explicitly, independent of whatever the wildcard rule above
+# happens to be later.
+/apis/ @vmware/terraform-provider-ssp-sspi-maintainers
+/internal/provider/client/ @vmware/terraform-provider-ssp-sspi-maintainers

@@ -28,6 +28,10 @@ designed to be used together within the same root module via `depends_on`. See t
 | [Go](https://go.dev/dl/) | ≥ 1.21 (only for building from source) |
 | SSP Platform | Accessible over HTTPS (`port 443`), admin credentials available |
 
+<!-- BEGIN GENERATED: version-compatibility (see internal/compat/compatibility.yaml, scripts/gen-compat-docs.py) -->
+**Platform compatibility:** tested against platform version `5.2.0`, minimum supported `5.2.0`. See [Version Compatibility](docs/guides/version-compatibility.md) for details.
+<!-- END GENERATED: version-compatibility -->
+
 ---
 
 ## Installation
