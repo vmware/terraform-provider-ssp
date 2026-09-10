@@ -9,11 +9,16 @@ name: Acceptance Tests (Jenkins)
 # fork PRs. Jenkins does the actual test run and reports a "Jenkins
 # Acceptance Tests" check back onto the PR when it finishes.
 #
-# TODO(Phase 5): this workflow will fail at the "Trigger Jenkins job" step
-# until JENKINS_URL, JENKINS_USER, and JENKINS_API_TOKEN are added as repo
-# secrets, and until the Jenkins-side github-checks-token credential (see
-# ci/jenkins/Jenkinsfile.acceptance) can actually reach the GitHub Checks
-# API -- see the CI plan for Phase 0-2/5 on provisioning the Jenkins side.
+# Phase 0 is resolved: the CIVT Jenkins node (https://jenkins-nsxqe.devops.broadcom.net/)
+# is the target instance, defaulted below via the JENKINS_URL repo variable
+# fallback. TODO(Phase 1/2): confirm/provision an agent on that Jenkins
+# labeled "ssp-lab" with SOCKS5/VPN reachability to the SSP Nimbus lab (it
+# may currently only have NSX-QE lab access, not SSP), and create the
+# credentials listed in ci/jenkins/Jenkinsfile.acceptance. TODO(Phase 5):
+# this workflow will still fail at the "Trigger Jenkins job" step until
+# JENKINS_USER and JENKINS_API_TOKEN are added as repo secrets, and until
+# the Jenkins-side github-checks-token credential can reach the GitHub
+# Checks API -- see the CI plan for the full Phase 1/2/5 checklist.
 
 on:
   issue_comment:
@@ -76,7 +81,11 @@ jobs:
 
       - name: Trigger Jenkins job
         env:
-          JENKINS_URL: ${{ secrets.JENKINS_URL }}
+          # JENKINS_URL isn't sensitive (it's just a hostname), so it's a
+          # repo *variable* with the known CIVT node as a fallback default --
+          # only JENKINS_USER/JENKINS_API_TOKEN need to be secrets. Override
+          # the variable if this ever moves to a dedicated Jenkins instance.
+          JENKINS_URL: ${{ vars.JENKINS_URL || 'https://jenkins-nsxqe.devops.broadcom.net' }}
           JENKINS_USER: ${{ secrets.JENKINS_USER }}
           JENKINS_API_TOKEN: ${{ secrets.JENKINS_API_TOKEN }}
           PR_NUMBER: ${{ steps.pr.outputs.number }}

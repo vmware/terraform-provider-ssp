@@ -6,10 +6,11 @@
 // "Pipeline script from SCM" pointing at this file, so pipeline changes
 // ship with the code they test.
 //
-// TODO(Phase 0): confirm whether a shared Jenkins instance with lab network
-// access already exists, or whether one needs to be stood up net-new --
-// this decides whether Phase 1/2 below is "wire onto existing Jenkins" or
-// a multi-week infra project.
+// Phase 0 is resolved: the target Jenkins instance is the CIVT node at
+// https://jenkins-nsxqe.devops.broadcom.net/. TODO(Phase 1): confirm it has
+// (or provision) an agent labeled "ssp-lab" with SOCKS5/VPN reachability to
+// the SSP Nimbus lab specifically -- an "nsxqe"-named node may currently
+// only have NSX-QE lab access, not SSP.
 //
 // One-time setup this pipeline assumes (see the CI plan, Phase 1/2):
 //   Agent label:  ssp-lab              (a Jenkins agent with SOCKS5/VPN
