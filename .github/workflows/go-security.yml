@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Setup Go
         uses: ./.github/actions/setup-go
       - name: Download Go Modules
@@ -36,6 +36,6 @@ jobs:
       - name: Build
         run: go build -v .
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
       - name: Run govulncheck
         run: govulncheck ./...
