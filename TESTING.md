@@ -75,6 +75,56 @@ TF_ACC=1 go test -v ./internal/provider -run=TestAccSensorRegistrationTokenResou
 
 ---
 
+## Running Acceptance Tests Before Submitting a PR
+
+There's no automatic per-PR acceptance-test trigger yet. Until then, this is how to self-check a
+change against a real SSP platform cluster before opening or updating a PR:
+
+### Option 1 — Run locally
+
+```shell
+export SSP_HOST="https://<your-testbed>"
+export SSP_USERNAME="admin"
+export SSP_PASSWORD="..."
+export SSP_INSECURE="true"
+make testacc
+```
+
+Fastest feedback loop — no CI latency, and you see failures in your own terminal.
+
+### Option 2 — Run via GitHub Actions against your branch
+
+The "Acceptance Tests" workflow (`.github/workflows/acceptance-tests.yml`) supports
+`workflow_dispatch`, which can run from **any branch**, including a feature branch before a PR
+exists:
+
+1. Push your branch.
+2. Actions tab → "Acceptance Tests" → **Run workflow** → pick your branch.
+3. Fill in `ssp_host`/`ssp_username`/`ssp_password` in the form. If your change touches `ssp_site`,
+   also fill in `nsx_host`/`nsx_username`/`nsx_password`/`nsx_certificate` — those tests need a
+   real NSX Manager and skip cleanly without them.
+4. Check the run's summary and log; once it's green, open or update the PR.
+
+This gives you a logged, shareable CI run instead of just local terminal output, but you still have
+to trigger it yourself each time — it isn't wired to fire automatically on push or PR open.
+
+### What happens if nothing is configured
+
+Both options above **skip cleanly rather than failing** if the connection details aren't set.
+`testAccSSPRuntimePreCheck` and `testAccNSXSitePreCheck` (`internal/provider/provider_test.go`)
+call `t.Skip(...)` if `SSP_HOST`/`SSP_USERNAME`/`SSP_PASSWORD` (or, for `ssp_site` tests,
+`NSX_HOST`/`NSX_USERNAME`/`NSX_PASSWORD`/`NSX_CERTIFICATE`) are empty — every `TestAcc*` test
+reports `SKIP` with a message naming the missing variable, and the overall run still reports
+success (exit code 0). Separately, if `TF_ACC` itself isn't set, the `terraform-plugin-testing`
+framework skips every acceptance test before the PreCheck even runs, for the same reason.
+
+The one case that **does** fail rather than skip: `SSP_HOST` is set but wrong or unreachable —
+then the test gets past the `t.Skip()` checks and fails with a real connection/HTTP error. So a
+green "Acceptance Tests" run with all tests reported `SKIP` means "nothing was actually
+configured," not "the tests passed" — check the log, not just the overall pass/fail status.
+
+---
+
 ## SOCKS5 Proxy & Testbed Connectivity Setup
 
 When running acceptance tests against isolated lab environments (e.g., Nimbus testbeds accessible only via a jump host), route HTTP traffic through an SSH SOCKS5 proxy tunnel.

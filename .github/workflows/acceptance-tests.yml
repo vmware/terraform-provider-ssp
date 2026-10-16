@@ -1,0 +1,157 @@
+---
+name: Acceptance Tests
+
+# Runs the live SSP acceptance suite (TestAcc*) against a real SSP platform cluster. Mirrors
+# `make testacc` -- see TESTING.md for what these tests cover and the full env var contract.
+#
+# Two ways to run it:
+#   1. On demand (workflow_dispatch): type the testbed details into the "Run workflow" form --
+#      host, credentials, optional NSX Manager details for ssp_site tests. Nothing needs to be
+#      pre-configured as a secret for this path; it's meant for "I have a testbed right now,
+#      point the suite at it."
+#   2. On a schedule (weekly cron): no inputs are available for a scheduled run, so it falls back
+#      to repo/environment secrets of the same names (SSP_HOST, SSP_USERNAME, ...). Only wire
+#      those up once you have a long-lived testbed worth testing against every week.
+#
+# REQUIRES NETWORK REACHABILITY to the SSP cluster (and NSX Manager, if testing ssp_site) from
+# wherever this runs. GitHub-hosted runners (ubuntu-latest) cannot reach an internal/VPN-only
+# host directly. If the testbed you give it isn't reachable from the public internet, either:
+#   - switch `runs-on` to a self-hosted runner that already has a route to it, or
+#   - fill in the jumphost_* inputs (or JUMPHOST_* secrets for the scheduled run) to open an SSH
+#     SOCKS5 tunnel first, same approach as the "SOCKS5 Proxy & Testbed Connectivity Setup"
+#     section in TESTING.md. The jump host's SSH private key must still be a secret
+#     (JUMPHOST_SSH_KEY) -- there's no safe way to paste a private key into a dispatch input.
+
+on:
+  schedule:
+    - cron: '0 4 * * 0'   # Sunday 04:00 UTC -- offset from sspi's equivalent weekly run
+  workflow_dispatch:
+    inputs:
+      ssp_host:
+        description: 'SSP platform cluster URL, e.g. https://vxlan-vm-111-71.nimbus-tb.nimbus.internal'
+        required: true
+      ssp_username:
+        description: 'SSP username'
+        required: false
+        default: 'admin'
+      ssp_password:
+        description: 'SSP password'
+        required: true
+      ssp_insecure:
+        description: 'Skip TLS verification'
+        type: boolean
+        required: false
+        default: true
+      nsx_host:
+        description: 'NSX Manager URL (optional -- only needed for ssp_site tests)'
+        required: false
+        default: ''
+      nsx_username:
+        description: 'NSX Manager username (optional)'
+        required: false
+        default: ''
+      nsx_password:
+        description: 'NSX Manager password (optional)'
+        required: false
+        default: ''
+      nsx_certificate:
+        description: 'NSX Manager certificate (optional, PEM)'
+        required: false
+        default: ''
+      allow_upgrade:
+        description: 'Allow the (mutating) upgrade acceptance test to run'
+        type: boolean
+        required: false
+        default: false
+      test_feature:
+        description: 'Feature name for the feature acceptance test (optional, SSP_ACC_TEST_FEATURE)'
+        required: false
+        default: ''
+      jumphost_host:
+        description: 'SOCKS5 jump host (optional -- leave blank if the testbed is directly reachable)'
+        required: false
+        default: ''
+      jumphost_user:
+        description: 'SSH user on the jump host (optional)'
+        required: false
+        default: ''
+      testargs:
+        description: 'Extra -run=... filter, e.g. -run=TestAccSiteDataSource'
+        required: false
+        default: ''
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  acceptance-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: ./.github/actions/setup-go
+
+      - name: Mask sensitive inputs
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          echo "::add-mask::${{ inputs.ssp_password }}"
+          echo "::add-mask::${{ inputs.nsx_password }}"
+
+      - name: Resolve testbed details
+        id: testbed
+        run: |
+          echo "jumphost_host=${{ inputs.jumphost_host || secrets.JUMPHOST_HOST }}" >> "$GITHUB_OUTPUT"
+          echo "jumphost_user=${{ inputs.jumphost_user || secrets.JUMPHOST_USER }}" >> "$GITHUB_OUTPUT"
+
+      - name: Open SOCKS5 tunnel to jump host
+        if: steps.testbed.outputs.jumphost_host != ''
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.JUMPHOST_SSH_KEY }}" > ~/.ssh/jumphost_key
+          chmod 600 ~/.ssh/jumphost_key
+          ssh -o StrictHostKeyChecking=accept-new -i ~/.ssh/jumphost_key \
+            "${{ steps.testbed.outputs.jumphost_user }}@${{ steps.testbed.outputs.jumphost_host }}" -D 9999 -N &
+          # Give the tunnel a moment to establish before tests start.
+          sleep 5
+
+      - name: Run acceptance tests
+        env:
+          TF_ACC: '1'
+          SSP_HOST: ${{ inputs.ssp_host || secrets.SSP_HOST }}
+          SSP_USERNAME: ${{ inputs.ssp_username || secrets.SSP_USERNAME }}
+          SSP_PASSWORD: ${{ inputs.ssp_password || secrets.SSP_PASSWORD }}
+          SSP_INSECURE: ${{ (github.event_name == 'workflow_dispatch' && inputs.ssp_insecure) || 'true' }}
+          NSX_HOST: ${{ inputs.nsx_host || secrets.NSX_HOST }}
+          NSX_USERNAME: ${{ inputs.nsx_username || secrets.NSX_USERNAME }}
+          NSX_PASSWORD: ${{ inputs.nsx_password || secrets.NSX_PASSWORD }}
+          NSX_CERTIFICATE: ${{ inputs.nsx_certificate || secrets.NSX_CERTIFICATE }}
+          SSP_ACC_ALLOW_UPGRADE: ${{ (github.event_name == 'workflow_dispatch' && inputs.allow_upgrade) || 'false' }}
+          SSP_ACC_TEST_FEATURE: ${{ inputs.test_feature || vars.SSP_ACC_TEST_FEATURE }}
+          ALL_PROXY: ${{ steps.testbed.outputs.jumphost_host != '' && 'socks5h://127.0.0.1:9999' || '' }}
+          HTTPS_PROXY: ${{ steps.testbed.outputs.jumphost_host != '' && 'socks5h://127.0.0.1:9999' || '' }}
+          NO_PROXY: '127.0.0.1,localhost,::1'
+        run: |
+          set -euo pipefail
+          go test ./... -v -count=1 -parallel=4 -timeout=45m ${{ inputs.testargs }} 2>&1 | tee acceptance-tests.log
+          {
+            echo "## Acceptance test run"
+            echo ""
+            echo '```'
+            grep -E '^(--- (PASS|FAIL|SKIP)|FAIL|ok|PASS)' acceptance-tests.log || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Archive full log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: acceptance-test-log
+          path: acceptance-tests.log
+          retention-days: 30
