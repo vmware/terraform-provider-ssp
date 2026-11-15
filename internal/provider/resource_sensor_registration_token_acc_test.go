@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -16,7 +17,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 	"golang.org/x/net/proxy"
-	"regexp"
 )
 
 func TestAccSensorRegistrationTokenResource(t *testing.T) {

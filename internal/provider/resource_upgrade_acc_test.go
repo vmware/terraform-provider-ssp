@@ -4,12 +4,12 @@
 package provider_test
 
 import (
+	"fmt"
 	"os"
+	"regexp"
 	"testing"
 
-	"fmt"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
-	"regexp"
 )
 
 // TestAccUpgradeResource exercises ssp_upgrade's Create (deploy
