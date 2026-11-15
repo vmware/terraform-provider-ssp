@@ -52,6 +52,10 @@ func (r *BackupConfigResource) Schema(ctx context.Context, req resource.SchemaRe
 		MarkdownDescription: "Manages the remote backup server (SFTP) configuration for the SSP platform.\n\n" +
 			"This is a singleton resource — only one backup configuration can exist per SSP instance.\n" +
 			"Use `terraform import ssp_backup_config.this singleton` to adopt an existing configuration.\n\n" +
+			"~> **Destroy does not delete the configuration.** The SSP API has no `DELETE` for the backup configuration " +
+			"and `PUT` requires every field to be set to a valid value, so it cannot be cleared. " +
+			"`terraform destroy` only removes this resource from Terraform state; the backup server settings remain " +
+			"configured on the SSP platform until they are overwritten.\n\n" +
 			"Corresponds to `GET/PUT /ssp/backup/config`.",
 
 		Attributes: map[string]schema.Attribute{

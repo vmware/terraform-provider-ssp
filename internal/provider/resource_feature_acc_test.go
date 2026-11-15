@@ -11,7 +11,9 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
+	"regexp"
 )
 
 // TestAccFeatureResource exercises ssp_feature's Create (RUN_PRECHECK then
@@ -45,10 +47,41 @@ func TestAccFeatureResource(t *testing.T) {
 			{
 				Config: testAccFeatureConfig(feature),
 				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(resourceName, "id", feature),
 					resource.TestCheckResourceAttr(resourceName, "feature", feature),
-					resource.TestCheckResourceAttrSet(resourceName, "overall_status"),
-					resource.TestCheckResourceAttrSet(resourceName, "overall_progress"),
+					resource.TestCheckResourceAttr(resourceName, "force_undeploy", "false"),
+					resource.TestCheckResourceAttr(resourceName, "overall_status", "DEPLOYMENT_SUCCESSFUL"),
+					resource.TestCheckResourceAttr(resourceName, "deployment_status", "DEPLOYMENT_SUCCESSFUL"),
+					resource.TestCheckResourceAttr(resourceName, "overall_progress", "100"),
+					resource.TestCheckResourceAttrSet(resourceName, "precheck_status"),
+					// The state must be what the platform reports.
+					testAccCheckAttrEqualsAPI(t, resourceName, "overall_status", func() string {
+						return fmt.Sprint(testAccAPIGet(t, "/ssp/lcm/features/"+feature+"/status")["overall_status"])
+					}),
 				),
+			},
+			// A deployed feature plans no change.
+			{Config: testAccFeatureConfig(feature), PlanOnly: true},
+			// force_undeploy only changes how Delete behaves, so it is updated in
+			// place and never redeploys the feature.
+			{
+				Config: testAccFeatureConfigForce(feature, true),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction(resourceName, plancheck.ResourceActionUpdate)},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(resourceName, "force_undeploy", "true"),
+					resource.TestCheckResourceAttr(resourceName, "overall_status", "DEPLOYMENT_SUCCESSFUL"),
+				),
+			},
+			{Config: testAccFeatureConfig(feature), Check: resource.TestCheckResourceAttr(resourceName, "force_undeploy", "false")},
+			// Import by feature name. force_undeploy has no server-side value.
+			{
+				ResourceName:            resourceName,
+				ImportState:             true,
+				ImportStateId:           feature,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"force_undeploy"},
 			},
 			// Delete Testing (UNDEPLOY) is handled automatically by
 			// terraform-plugin-testing at the end of Test; CheckDestroy above
@@ -110,4 +143,60 @@ func testAccCheckFeatureDestroy(s *terraform.State) error {
 	}
 
 	return nil
+}
+
+func testAccFeatureConfigForce(feature string, force bool) string {
+	return fmt.Sprintf(`
+resource "ssp_feature" "test" {
+  feature        = %q
+  force_undeploy = %t
+}
+`, feature, force)
+}
+
+// A feature name that is not one of the supported ones is rejected at plan time,
+// before anything is deployed. Names are case-sensitive.
+func TestAccFeatureResource_InvalidFeature(t *testing.T) {
+	var steps []resource.TestStep
+	for _, name := range []string{"FOO", "ndr", ""} {
+		steps = append(steps, resource.TestStep{
+			Config:      testAccFeatureConfig(name),
+			ExpectError: regexp.MustCompile(`(?s)feature.*must be one of`),
+		})
+	}
+	steps = append(steps, resource.TestStep{
+		Config:      `resource "ssp_feature" "test" {}`,
+		ExpectError: regexp.MustCompile(`(?s)Missing required argument.*feature`),
+	})
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccSSPRuntimePreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps:                    steps,
+	})
+}
+
+// A feature whose pre-checks fail is not deployed, and each failed check is
+// listed. SSP_ACC_FEATURE_PRECHECK_FAILS names a feature that is known to fail its
+// pre-checks on the cluster. It is opt-in because a feature whose pre-checks pass
+// would be deployed.
+func TestAccFeatureResource_PrechecksFail(t *testing.T) {
+	feature := os.Getenv("SSP_ACC_FEATURE_PRECHECK_FAILS")
+
+	resource.Test(t, resource.TestCase{
+		PreCheck: func() {
+			testAccSSPRuntimePreCheck(t)
+			if feature == "" {
+				t.Skip("SSP_ACC_FEATURE_PRECHECK_FAILS must name a feature whose pre-checks fail on this cluster")
+			}
+		},
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckFeatureDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config:      testAccFeatureConfig(feature),
+				ExpectError: regexp.MustCompile(`(?s)Pre-checks failed for feature ` + feature + `.*pre-checks failed`),
+			},
+		},
+	})
 }

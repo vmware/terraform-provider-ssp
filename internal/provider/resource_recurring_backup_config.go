@@ -12,7 +12,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/objectplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -89,9 +88,7 @@ func (r *RecurringBackupConfigResource) Schema(ctx context.Context, req resource
 			},
 			"backup_schedule_weekly": schema.SingleNestedAttribute{
 				Optional:            true,
-				Computed:            true,
 				MarkdownDescription: "Weekly schedule settings. Required when `backup_schedule_type = WEEKLY`.",
-				PlanModifiers:       []planmodifier.Object{objectplanmodifier.UseStateForUnknown()},
 				Attributes: map[string]schema.Attribute{
 					"days_of_week": schema.ListAttribute{
 						Required:            true,
@@ -114,9 +111,7 @@ func (r *RecurringBackupConfigResource) Schema(ctx context.Context, req resource
 			},
 			"backup_schedule_interval": schema.SingleNestedAttribute{
 				Optional:            true,
-				Computed:            true,
 				MarkdownDescription: "Interval schedule settings. Required when `backup_schedule_type = INTERVAL`.",
-				PlanModifiers:       []planmodifier.Object{objectplanmodifier.UseStateForUnknown()},
 				Attributes: map[string]schema.Attribute{
 					"hours_between_backups": schema.Int64Attribute{
 						Optional:            true,
@@ -131,10 +126,10 @@ func (r *RecurringBackupConfigResource) Schema(ctx context.Context, req resource
 }
 
 // ValidateConfig ensures backup_schedule_type and the matching nested schedule
-// block are configured together. Without this, switching backup_schedule_type
-// without also supplying the corresponding block would carry forward a stale
-// nested object from prior state (via UseStateForUnknown) into a
-// self-inconsistent PUT payload with no warning to the user.
+// block are configured together. The schedule blocks are deliberately not
+// Computed: an unconfigured block must plan as null so that switching
+// backup_schedule_type never sends the previous schedule's block to the API
+// (which rejects e.g. a weekly block on an INTERVAL schedule).
 func (r *RecurringBackupConfigResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
 	var data RecurringBackupConfigResourceModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)

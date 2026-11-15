@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"sync"
 	"testing"
 
@@ -44,6 +45,15 @@ func newRecurringBackupConfigMockServer(t *testing.T) *httptest.Server {
 		defer m.mu.Unlock()
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
+		// Mirror the live API: the block for the other schedule type must be absent.
+		if body["backup_schedule_type"] == "INTERVAL" && body["backup_schedule_weekly"] != nil {
+			http.Error(w, `{"error_code":400,"error_message":"weekly backup schedule must be empty for schedule type INTERVAL"}`, http.StatusBadRequest)
+			return
+		}
+		if body["backup_schedule_type"] == "WEEKLY" && body["backup_schedule_interval"] != nil {
+			http.Error(w, `{"error_code":400,"error_message":"interval backup schedule must be empty for schedule type WEEKLY"}`, http.StatusBadRequest)
+			return
+		}
 		m.exists = true
 		m.revision++
 		body["_revision"] = m.revision
@@ -105,5 +115,68 @@ func TestUnitRecurringBackupConfigResource(t *testing.T) {
 				),
 			},
 		},
+	})
+}
+
+const testUnitRecurringBackupConfigIntervalConfig = `
+resource "ssp_recurring_backup_config" "test" {
+  enabled              = true
+  backup_type          = "FULL_BACKUP"
+  backup_schedule_type = "INTERVAL"
+
+  backup_schedule_interval = {
+    hours_between_backups = 12
+  }
+}
+`
+
+// TestUnitRecurringBackupConfigSwitchScheduleType is the regression test for
+// switching backup_schedule_type in place: the previous schedule's block must
+// not be carried over into the PUT payload (the API answers 400 otherwise).
+func TestUnitRecurringBackupConfigSwitchScheduleType(t *testing.T) {
+	srv := newRecurringBackupConfigMockServer(t)
+	const addr = "ssp_recurring_backup_config.test"
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: testUnitRecurringBackupConfigConfig(srv.URL, 2)},
+			{
+				Config: testUnitRuntimeProviderConfig(srv.URL) + testUnitRecurringBackupConfigIntervalConfig,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(addr, "backup_schedule_type", "INTERVAL"),
+					resource.TestCheckResourceAttr(addr, "backup_schedule_interval.hours_between_backups", "12"),
+					resource.TestCheckNoResourceAttr(addr, "backup_schedule_weekly.days_of_week.#"),
+				),
+			},
+			{
+				Config: testUnitRecurringBackupConfigConfig(srv.URL, 4),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(addr, "backup_schedule_type", "WEEKLY"),
+					resource.TestCheckResourceAttr(addr, "backup_schedule_weekly.hour_of_day", "4"),
+					resource.TestCheckNoResourceAttr(addr, "backup_schedule_interval.hours_between_backups"),
+				),
+			},
+		},
+	})
+}
+
+// TestUnitRecurringBackupConfigMissingScheduleBlock verifies the plan-time
+// check that the block matching backup_schedule_type is configured.
+func TestUnitRecurringBackupConfigMissingScheduleBlock(t *testing.T) {
+	srv := newRecurringBackupConfigMockServer(t)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{{
+			Config: testUnitRuntimeProviderConfig(srv.URL) + `
+resource "ssp_recurring_backup_config" "test" {
+  enabled              = true
+  backup_type          = "FULL_BACKUP"
+  backup_schedule_type = "INTERVAL"
+}
+`,
+			ExpectError: regexp.MustCompile(`backup_schedule_interval must be set`),
+		}},
 	})
 }

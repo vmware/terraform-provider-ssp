@@ -3,13 +3,13 @@
 page_title: "ssp_sites Data Source - ssp"
 subcategory: ""
 description: |-
-  Lists all sites (NSX Manager, AVI, SSP) currently connected to the SSP platform.
+  Lists all sites (NSX Manager) currently connected to the SSP platform.
   Corresponds to GET /ssp/sites.
 ---
 
 # ssp_sites (Data Source)
 
-Lists all sites (NSX Manager, AVI, SSP) currently connected to the SSP platform.
+Lists all sites (NSX Manager) currently connected to the SSP platform.
 
 Corresponds to `GET /ssp/sites`.
 
@@ -30,4 +30,4 @@ Read-Only:
 - `current_state` (String) Current readiness: READY, NOT_READY, INACTIVE, UNKNOWN.
 - `id` (String) Site UUID.
 - `site_name` (String) Site display name.
-- `site_type` (String) Site type: NSX_MANAGER, AVI, or SSP.
+- `site_type` (String) Site type: NSX_MANAGER.

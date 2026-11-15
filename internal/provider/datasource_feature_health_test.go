@@ -20,7 +20,7 @@ func newFeatureHealthDataSourceMockServer(t *testing.T) *httptest.Server {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"overall_status": "UP",
+			"status": "UP",
 			"features": []map[string]any{
 				{
 					"name":   "NDR",

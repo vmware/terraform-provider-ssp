@@ -196,7 +196,7 @@ func (r *BackupResource) Read(ctx context.Context, req resource.ReadRequest, res
 
 	var status client.BackupStatus
 	httpStatus, err := r.client.Get(ctx, "/ssp/backup/status/"+data.ID.ValueString(), &status)
-	if httpStatus == 404 {
+	if client.IsBackupNotFound(httpStatus, err) {
 		resp.State.RemoveResource(ctx)
 		return
 	}

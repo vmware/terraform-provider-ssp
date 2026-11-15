@@ -7,11 +7,13 @@ import (
 	"context"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/vmware/terraform-provider-ssp/internal/provider/client"
 )
@@ -47,6 +49,7 @@ func (r *ReadinessResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 
 During ` + "`Create`" + `, polls ` + "`GET /ssp/cluster/monitor/platform/status`" + ` with the provider credentials
 every 30 s until HTTP 200 is returned, confirming the cluster is operational.
+Authentication failures (HTTP 401/403) fail immediately; on timeout the last error is reported.
 
 On subsequent plan/apply cycles the resource is a no-op. Destroy and recreate it to
 re-run the readiness check (e.g. after a platform redeployment).`,
@@ -61,7 +64,8 @@ re-run the readiness check (e.g. after a platform redeployment).`,
 				Optional:            true,
 				Computed:            true,
 				Default:             int64default.StaticInt64(20),
-				MarkdownDescription: "Maximum number of minutes to wait for the SSP API to return HTTP 200. Defaults to `20`.",
+				Validators:          []validator.Int64{int64validator.AtLeast(1)},
+				MarkdownDescription: "Maximum number of minutes to wait for the SSP API to return HTTP 200. Must be at least `1`. Defaults to `20`.",
 			},
 		},
 	}
@@ -88,7 +92,7 @@ func (r *ReadinessResource) Create(ctx context.Context, req resource.CreateReque
 
 	timeout := time.Duration(data.TimeoutMinutes.ValueInt64()) * time.Minute
 	if err := r.client.WaitForSSPAPIReady(ctx, timeout); err != nil {
-		resp.Diagnostics.AddError("SSP API readiness check timed out", err.Error())
+		resp.Diagnostics.AddError("SSP API readiness check failed", err.Error())
 		return
 	}
 

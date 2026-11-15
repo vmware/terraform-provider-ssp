@@ -22,12 +22,14 @@ func newSitesDataSourceMockServer(t *testing.T) *httptest.Server {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"sites": []map[string]any{
 				{
-					"id":            "site-uuid-555",
-					"site_type":     "NSX_MANAGER",
-					"site_name":     "NSX-Manager-Prod",
-					"current_state": "READY",
+					"id":        "site-uuid-555",
+					"site_type": "NSX_MANAGER",
+					"site_name": "NSX-Manager-Prod",
 					"status": map[string]any{
 						"connection_status": "HEALTHY",
+						"configuration_status": map[string]any{
+							"current_status": "READY",
+						},
 					},
 				},
 			},

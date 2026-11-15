@@ -72,15 +72,16 @@ func (r *CloudConnectorConfigResource) Schema(_ context.Context, _ resource.Sche
 					"`west.eu` for *European Union 1*). " +
 					"Use `GET /ssp/lcm/cloud-connector/regions` to retrieve the list of available regions.",
 			},
+			// fqdn and region_name are resolved from region on every PUT, so they
+			// deliberately have no UseStateForUnknown: carrying the old values over
+			// on a region change fails the apply with "inconsistent result".
 			"fqdn": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "FQDN of the selected Cloud Connector region. Resolved automatically from `region`.",
-				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"region_name": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "Human-readable name of the selected region (e.g. `US 1`, `EU 1`). Resolved automatically from `region`.",
-				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"configurable": schema.BoolAttribute{
 				Computed:            true,

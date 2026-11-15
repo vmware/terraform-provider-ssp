@@ -28,7 +28,7 @@ func NewSiteResource() resource.Resource {
 	return &SiteResource{}
 }
 
-// SiteResource manages the onboarding of an NSX Manager (or AVI/SSP) site with SSP.
+// SiteResource manages the onboarding of an NSX Manager site (or an AVI/SSP site on License Hub) with SSP.
 type SiteResource struct {
 	client *client.Client
 }
@@ -63,9 +63,12 @@ func (r *SiteResource) Metadata(ctx context.Context, req resource.MetadataReques
 
 func (r *SiteResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Onboards a site (NSX Manager, AVI, or SSP) to the SSP platform.\n\n" +
+		MarkdownDescription: "Onboards a site to the SSP platform. Only `NSX_MANAGER` sites can be onboarded to SSP;\n" +
+			"`AVI` and `SSP` sites are supported only when onboarding endpoints to License Hub.\n\n" +
 			"The onboarding workflow is asynchronous; the provider polls until the site reaches\n" +
-			"READY state (up to 90 minutes).\n\n" +
+			"READY state (up to 90 minutes). With `desired_state = PREPARE` the platform only runs\n" +
+			"the prechecks and never onboards the site, so the provider waits for the prechecks to\n" +
+			"finish instead and fails if any of them failed.\n\n" +
 			"Credentials in `site_connection_info` are **one-time use** — SSP never stores or\n" +
 			"returns them. They are kept in Terraform state (encrypted) so that reconnect and\n" +
 			"offboard operations can use them.\n\n" +
@@ -80,7 +83,7 @@ func (r *SiteResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 			},
 			"site_type": schema.StringAttribute{
 				Required:            true,
-				MarkdownDescription: "Site type: `NSX_MANAGER`, `AVI`, or `SSP`.",
+				MarkdownDescription: "Site type: `NSX_MANAGER`, `AVI`, or `SSP`. Only `NSX_MANAGER` can be onboarded to SSP; `AVI` and `SSP` require License Hub.",
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
 				Validators:          []validator.String{stringvalidator.OneOf("NSX_MANAGER", "SSP", "AVI")},
 			},
@@ -90,9 +93,10 @@ func (r *SiteResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},
 			"desired_state": schema.StringAttribute{
-				Required:            true,
-				MarkdownDescription: "Desired onboarding state: `ONBOARD` (full onboard), `PREPARE` (prechecks only), or `OFFBOARD`.",
-				Validators:          []validator.String{stringvalidator.OneOf("ONBOARD", "OFFBOARD", "PREPARE")},
+				Required: true,
+				MarkdownDescription: "Desired onboarding state: `ONBOARD` (full onboard), `PREPARE` (prechecks only), or `OFFBOARD`. " +
+					"The platform accepts only `ONBOARD` when updating an existing site (reconnect); `PREPARE` and `OFFBOARD` are rejected with error 200006.",
+				Validators: []validator.String{stringvalidator.OneOf("ONBOARD", "OFFBOARD", "PREPARE")},
 			},
 			"force": schema.BoolAttribute{
 				Optional:            true,
@@ -216,8 +220,16 @@ func (r *SiteResource) Create(ctx context.Context, req resource.CreateRequest, r
 		return
 	}
 
-	if err := r.client.WaitForSiteReady(ctx, siteID); err != nil {
-		resp.Diagnostics.AddError("Error waiting for site to become ready", err.Error())
+	// PREPARE halts after the prechecks and never onboards the site, so it never
+	// becomes READY; wait for the prechecks instead.
+	var waitErr error
+	if data.DesiredState.ValueString() == "PREPARE" {
+		waitErr = r.client.WaitForSitePrechecks(ctx, siteID)
+	} else {
+		waitErr = r.client.WaitForSiteReady(ctx, siteID)
+	}
+	if waitErr != nil {
+		resp.Diagnostics.AddError("Error waiting for site to become ready", waitErr.Error())
 		return
 	}
 
@@ -336,6 +348,11 @@ func (r *SiteResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 	if data.Force.ValueBool() {
 		path += "?force=true"
 	}
+	// Offboard prechecks that ran before this request must not fail the wait.
+	var before client.Site
+	_, _ = r.client.Get(ctx, "/ssp/sites/"+data.ID.ValueString(), &before)
+	since := client.LatestSitePrecheckTime(&before)
+
 	status, err := r.client.DeleteWithBody(ctx, path, creds)
 	if status == 404 {
 		return
@@ -345,7 +362,7 @@ func (r *SiteResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 		return
 	}
 
-	if err := r.client.WaitForSiteDeleted(ctx, data.ID.ValueString()); err != nil {
+	if err := r.client.WaitForSiteDeleted(ctx, data.ID.ValueString(), since); err != nil {
 		resp.Diagnostics.AddError("Error waiting for site deletion", err.Error())
 		return
 	}
@@ -367,6 +384,13 @@ func (r *SiteResource) ImportState(ctx context.Context, req resource.ImportState
 	}
 
 	mapSiteToState(&site, &data)
+
+	// desired_state is not part of the Read mapping; take it from the API here so
+	// an imported site does not plan a spurious update, and force defaults to false.
+	if site.DesiredState != "" {
+		data.DesiredState = types.StringValue(site.DesiredState)
+	}
+	data.Force = types.BoolValue(false)
 
 	// Credentials (username/password/certificate) are write-only and never echoed
 	// back by the API, so those are populated with empty placeholders -- the user
@@ -447,7 +471,8 @@ func mapSiteToState(site *client.Site, m *SiteResourceModel) {
 	m.ID = types.StringValue(site.ID)
 	m.SiteType = types.StringValue(site.SiteType)
 	m.SiteName = types.StringValue(site.SiteName)
-	m.CurrentState = types.StringValue(site.CurrentState)
+	currentState := client.SiteReadiness(site)
+	m.CurrentState = types.StringValue(currentState)
 
 	if site.Status != nil {
 		m.ConnectionStatus = types.StringValue(site.Status.ConnectionStatus)

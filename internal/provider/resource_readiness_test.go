@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
@@ -64,6 +65,22 @@ func TestUnitReadinessResource(t *testing.T) {
 					resource.TestCheckResourceAttr("ssp_readiness.test", "id", "done"),
 					resource.TestCheckResourceAttr("ssp_readiness.test", "timeout_minutes", "5"),
 				),
+			},
+		},
+	})
+}
+
+// TestUnitReadinessResource_InvalidTimeout verifies timeout_minutes < 1 is
+// rejected at plan time.
+func TestUnitReadinessResource_InvalidTimeout(t *testing.T) {
+	srv := newReadinessMockServer(t)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:      testUnitReadinessConfig(srv.URL, 0),
+				ExpectError: regexp.MustCompile(`(?s)timeout_minutes.*at least 1`),
 			},
 		},
 	})

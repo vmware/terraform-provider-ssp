@@ -7,7 +7,9 @@ import (
 	"os"
 	"testing"
 
+	"fmt"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"regexp"
 )
 
 // TestAccUpgradeResource exercises ssp_upgrade's Create (deploy
@@ -46,7 +48,30 @@ func TestAccUpgradeResource(t *testing.T) {
 					resource.TestCheckResourceAttrSet(resourceName, "status"),
 					resource.TestCheckResourceAttrSet(resourceName, "current_version"),
 					resource.TestCheckResourceAttrSet(resourceName, "target_version"),
+					resource.TestCheckResourceAttrSet(resourceName, "progress"),
+					resource.TestCheckResourceAttrWith(resourceName, "status", func(v string) error {
+						if !regexp.MustCompile(`^(NOT_STARTED|IN_PROGRESS|SUCCESS|FAILED)$`).MatchString(v) {
+							return fmt.Errorf("status = %q, want NOT_STARTED, IN_PROGRESS, SUCCESS or FAILED", v)
+						}
+						return nil
+					}),
+					resource.TestCheckResourceAttrWith(resourceName, "target_version", func(v string) error {
+						if v == "" {
+							return fmt.Errorf("target_version is empty")
+						}
+						return nil
+					}),
 				),
+			},
+			// The upgrade is a single cluster-wide workflow: a finished apply plans no change.
+			{Config: testAccUpgradeConfig(), PlanOnly: true},
+			// Import by the fixed id. run_prechecks is not stored on the platform.
+			{
+				ResourceName:            resourceName,
+				ImportState:             true,
+				ImportStateId:           "upgrade",
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"run_prechecks"},
 			},
 			// Delete Testing (undeploy UPGRADE_COORDINATOR only — does not
 			// revert the platform version) is handled automatically by

@@ -6,8 +6,10 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -87,6 +89,153 @@ func TestWaitForSiteReady_MultiIteration(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&calls); got < 3 {
 		t.Fatalf("expected at least 3 poll calls (loop must iterate), got %d", got)
+	}
+}
+
+// siteWithReadiness builds a site whose readiness is only in
+// status.configuration_status, as the live platform returns it.
+func siteWithReadiness(readiness, connection string) Site {
+	st := &NsxSiteStatus{ConnectionStatus: connection}
+	if readiness != "" {
+		st.ConfigurationStatus = &SiteConfigurationStatus{CurrentStatus: readiness}
+	}
+	return Site{ID: "site-1", Status: st}
+}
+
+// TestWaitForSiteReady_WaitsPastHealthyConnection verifies a HEALTHY connection
+// does not end the wait while the site is still ONBOARD_IN_PROGRESS.
+func TestWaitForSiteReady_WaitsPastHealthyConnection(t *testing.T) {
+	withFastPolling(t, time.Second)
+
+	var calls int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /ssp/sites/site-1", func(w http.ResponseWriter, r *http.Request) {
+		readiness := "ONBOARD_IN_PROGRESS"
+		if atomic.AddInt32(&calls, 1) >= 4 {
+			readiness = "READY"
+		}
+		_ = json.NewEncoder(w).Encode(siteWithReadiness(readiness, "HEALTHY"))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	if err := newTestClient(srv.URL).WaitForSiteReady(context.Background(), "site-1"); err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if got := atomic.LoadInt32(&calls); got < 4 {
+		t.Fatalf("returned after %d polls, before the site was READY", got)
+	}
+}
+
+// TestWaitForSiteReady_FailsOnNestedNotReady verifies a terminal state that is
+// only reported under status.configuration_status ends the wait with an error.
+func TestWaitForSiteReady_FailsOnNestedNotReady(t *testing.T) {
+	withFastPolling(t, time.Second)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /ssp/sites/site-1", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(siteWithReadiness("NOT_READY", "HEALTHY"))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	err := newTestClient(srv.URL).WaitForSiteReady(context.Background(), "site-1")
+	if err == nil || !strings.Contains(err.Error(), "terminal failure state: current_state=NOT_READY") {
+		t.Fatalf("expected a terminal failure, got %v", err)
+	}
+}
+
+// TestWaitForSiteReady_TransientNotReady verifies the NOT_READY a new onboard
+// reports for its first moments does not fail the wait.
+func TestWaitForSiteReady_TransientNotReady(t *testing.T) {
+	withFastPolling(t, time.Second)
+
+	var calls int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /ssp/sites/site-1", func(w http.ResponseWriter, r *http.Request) {
+		readiness := []string{"NOT_READY", "ONBOARD_IN_PROGRESS", "NOT_READY", "ONBOARD_IN_PROGRESS", "READY"}
+		n := int(atomic.AddInt32(&calls, 1))
+		if n > len(readiness) {
+			n = len(readiness)
+		}
+		_ = json.NewEncoder(w).Encode(siteWithReadiness(readiness[n-1], "UNKNOWN"))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	if err := newTestClient(srv.URL).WaitForSiteReady(context.Background(), "site-1"); err != nil {
+		t.Fatalf("a transient NOT_READY must not fail the wait: %s", err)
+	}
+}
+
+// sitePrechecks builds a site that only reports prechecks, like a PREPARE site.
+func sitePrechecks(state string, results ...SitePrecheckRun) Site {
+	return Site{ID: "site-1", Status: &NsxSiteStatus{ConfigurationStatus: &SiteConfigurationStatus{
+		CurrentStatus:      "NOT_READY",
+		SitePrecheckStatus: &SitePrecheckStatus{Phase: "ONBOARD", State: state, Results: results},
+	}}}
+}
+
+// TestWaitForSitePrechecks_PassesWhileNotReady verifies a PREPARE site, which stays
+// NOT_READY, completes once the prechecks leave IN_PROGRESS and passed.
+func TestWaitForSitePrechecks_PassesWhileNotReady(t *testing.T) {
+	withFastPolling(t, time.Second)
+
+	var calls int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /ssp/sites/site-1", func(w http.ResponseWriter, r *http.Request) {
+		state := "IN_PROGRESS"
+		if atomic.AddInt32(&calls, 1) >= 3 {
+			state = "PASSED"
+		}
+		_ = json.NewEncoder(w).Encode(sitePrechecks(state))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	if err := newTestClient(srv.URL).WaitForSitePrechecks(context.Background(), "site-1"); err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if got := atomic.LoadInt32(&calls); got < 3 {
+		t.Fatalf("returned after %d polls, before the prechecks finished", got)
+	}
+}
+
+// TestWaitForSitePrechecks_Failed verifies failed prechecks are reported by name.
+func TestWaitForSitePrechecks_Failed(t *testing.T) {
+	withFastPolling(t, time.Second)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /ssp/sites/site-1", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(sitePrechecks("FAILED",
+			SitePrecheckRun{Name: "SiteConnectionPrecheck", Status: "PASSED"},
+			SitePrecheckRun{Name: "SiteRegistrationPrecheck", Status: "FAILED", Message: "site is registered to another SSP"},
+		))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	err := newTestClient(srv.URL).WaitForSitePrechecks(context.Background(), "site-1")
+	if err == nil || !strings.Contains(err.Error(), "SiteRegistrationPrecheck (FAILED): site is registered to another SSP") ||
+		strings.Contains(err.Error(), "SiteConnectionPrecheck") {
+		t.Fatalf("expected only the failed precheck in the error, got %v", err)
+	}
+}
+
+// TestWaitForSiteReady_HealthyWithoutReadiness verifies a HEALTHY connection still
+// completes the wait when the platform reports no readiness state at all.
+func TestWaitForSiteReady_HealthyWithoutReadiness(t *testing.T) {
+	withFastPolling(t, time.Second)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /ssp/sites/site-1", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(siteWithReadiness("", "HEALTHY"))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	if err := newTestClient(srv.URL).WaitForSiteReady(context.Background(), "site-1"); err != nil {
+		t.Fatalf("unexpected error: %s", err)
 	}
 }
 
@@ -278,6 +427,57 @@ func TestWaitForSSPAPIReady_Timeout(t *testing.T) {
 	}
 }
 
+// TestWaitForSSPAPIReady_TimeoutReportsLastError verifies the timeout error
+// carries the last API error body instead of a generic message.
+func TestWaitForSSPAPIReady_TimeoutReportsLastError(t *testing.T) {
+	withFastAPIReadyPolling(t)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /ssp/cluster/monitor/platform/status", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error_message":"platform starting"}`))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	err := newTestClient(srv.URL).WaitForSSPAPIReady(context.Background(), 50*time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "503") || !strings.Contains(err.Error(), "platform starting") {
+		t.Fatalf("expected timeout error containing the last API error, got %v", err)
+	}
+}
+
+// TestWaitForSSPAPIReady_UnauthorizedFailsFast verifies 401 is not retried.
+func TestWaitForSSPAPIReady_UnauthorizedFailsFast(t *testing.T) {
+	withFastAPIReadyPolling(t)
+
+	var calls int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /ssp/cluster/monitor/platform/status", func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error_code":401,"error_message":"Unauthorized Access"}`))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	err := newTestClient(srv.URL).WaitForSSPAPIReady(context.Background(), time.Minute)
+	if err == nil || !strings.Contains(err.Error(), "Unauthorized Access") {
+		t.Fatalf("expected credentials error with API message, got %v", err)
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("expected exactly 1 call, got %d", got)
+	}
+}
+
+// TestWaitForSSPAPIReady_InvalidHost verifies a host without a scheme fails
+// immediately.
+func TestWaitForSSPAPIReady_InvalidHost(t *testing.T) {
+	err := newTestClient("ssp.example.com").WaitForSSPAPIReady(context.Background(), time.Minute)
+	if err == nil || !strings.Contains(err.Error(), "invalid SSP host") {
+		t.Fatalf("expected invalid host error, got %v", err)
+	}
+}
+
 // TestWaitForFeaturePrechecks_MultiIteration verifies the precheck poll loop
 // iterates through IN_PROGRESS before reaching a terminal SUCCESS.
 func TestWaitForFeaturePrechecks_MultiIteration(t *testing.T) {
@@ -331,10 +531,66 @@ func TestWaitForSiteDeleted_MultiIteration(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	c := newTestClient(srv.URL)
-	if err := c.WaitForSiteDeleted(context.Background(), "site-1"); err != nil {
+	if err := c.WaitForSiteDeleted(context.Background(), "site-1", 0); err != nil {
 		t.Fatalf("unexpected error: %s", err)
 	}
 	if got := atomic.LoadInt32(&calls); got < 3 {
 		t.Fatalf("expected at least 3 poll calls (loop must iterate), got %d", got)
+	}
+}
+
+// TestWaitForSiteDeleted_OffboardPrecheckFailed verifies a failed offboard
+// precheck from a run after the delete request ends the wait with an error, while
+// the same result from an earlier run is ignored.
+func TestWaitForSiteDeleted_OffboardPrecheckFailed(t *testing.T) {
+	withFastPolling(t, time.Second)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /ssp/sites/site-1", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(Site{ID: "site-1", Status: &NsxSiteStatus{
+			ConfigurationStatus: &SiteConfigurationStatus{
+				CurrentStatus: "READY",
+				SitePrecheckStatus: &SitePrecheckStatus{
+					Phase: "OFFBOARD",
+					Results: []SitePrecheckRun{{
+						Name: "FeaturesActivatePrecheck", Status: "FAILED", RunTime: 2000,
+						Message: "features are currently enabled on SSP",
+					}},
+				},
+			},
+		}})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	c := newTestClient(srv.URL)
+
+	err := c.WaitForSiteDeleted(context.Background(), "site-1", 1000)
+	if err == nil || !strings.Contains(err.Error(), "FeaturesActivatePrecheck: features are currently enabled on SSP") {
+		t.Fatalf("expected the failed precheck in the error, got %v", err)
+	}
+
+	// A failure from before the request (run time <= since) is stale: keep polling
+	// until the timeout instead of failing.
+	defaultPollTimeout = 100 * time.Millisecond
+	err = c.WaitForSiteDeleted(context.Background(), "site-1", 2000)
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("expected a timeout for a stale precheck, got %v", err)
+	}
+}
+
+func TestIsBackupNotFound(t *testing.T) {
+	notFound := errors.New(`API error 400: {"error_code":972011,"error_message":"Backup status not found for ID: x.","module_name":"cluster-api"}`)
+	other400 := errors.New(`API error 400: {"error_code":972051,"error_message":"site not ready"}`)
+	if !IsBackupNotFound(404, errors.New("API error 404: ")) {
+		t.Error("404 should be not-found")
+	}
+	if !IsBackupNotFound(400, notFound) {
+		t.Error("400/972011 should be not-found")
+	}
+	if IsBackupNotFound(400, other400) {
+		t.Error("other 400 must not be not-found")
+	}
+	if IsBackupNotFound(500, notFound) || IsBackupNotFound(200, nil) {
+		t.Error("non-400/404 must not be not-found")
 	}
 }

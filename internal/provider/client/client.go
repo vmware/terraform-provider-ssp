@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -49,8 +51,13 @@ func NewClient(host, username, password string, insecure bool) *Client {
 	}
 	if strings.HasPrefix(host, "http://127.0.0.1") || strings.HasPrefix(host, "http://localhost") {
 		transport.Proxy = nil
-	} else if cd, ok := proxy.FromEnvironment().(proxy.ContextDialer); ok {
-		transport.DialContext = cd.DialContext
+	} else if os.Getenv("HTTPS_PROXY") == "" && os.Getenv("https_proxy") == "" {
+		// Honour ALL_PROXY (e.g. socks5h://) only when HTTPS_PROXY is unset.
+		// With both set, Transport.Proxy would dial the proxy through the
+		// ALL_PROXY dialer, i.e. proxy-over-proxy, and the connect fails.
+		if cd, ok := proxy.FromEnvironment().(proxy.ContextDialer); ok {
+			transport.DialContext = cd.DialContext
+		}
 	}
 	return &Client{
 		host:     host,
@@ -86,10 +93,15 @@ type TelemetryConfig struct {
 // TelemetrySchedule defines when telemetry data is uploaded.
 type TelemetrySchedule struct {
 	FrequencyType string `json:"frequency_type,omitempty"`
-	HourOfDay     int    `json:"hour_of_day,omitempty"`
-	Minutes       int    `json:"minutes,omitempty"`
-	DayOfWeek     string `json:"day_of_week,omitempty"`
-	DayOfMonth    int    `json:"day_of_month,omitempty"`
+	// HourOfDay and Minutes must not be omitempty: 0 is a valid value (midnight /
+	// top of the hour) and omitting it makes the API fall back to its default
+	// hour of 2.
+	HourOfDay int `json:"hour_of_day"`
+	Minutes   int `json:"minutes"`
+	// DayOfWeek and DayOfMonth are only meaningful for WEEKLY and MONTHLY schedules
+	// respectively; the API omits them from responses otherwise.
+	DayOfWeek  string `json:"day_of_week,omitempty"`
+	DayOfMonth int    `json:"day_of_month,omitempty"`
 }
 
 // ── Backup ─────────────────────────────────────────────────────────────────────
@@ -133,7 +145,8 @@ type IntervalBackupSchedule struct {
 
 // BackupStatusList is the paginated response for GET /ssp/backup/status.
 type BackupStatusList struct {
-	Results          []BackupStatus `json:"results"`
+	// The API names this field "result" (singular), unlike most list responses.
+	Result           []BackupStatus `json:"result"`
 	TotalResultCount int            `json:"total_result_count"`
 }
 
@@ -221,6 +234,76 @@ type NsxSiteStatus struct {
 	ClusterStatus    string `json:"cluster_status,omitempty"`
 	NsxClusterID     string `json:"nsx_cluster_id,omitempty"`
 	NsxVersion       string `json:"nsx_version,omitempty"`
+	// ConfigurationStatus carries the site readiness (READY, NOT_READY, ...);
+	// current_state at the top level of the site is not returned by every build.
+	ConfigurationStatus *SiteConfigurationStatus `json:"configuration_status,omitempty"`
+}
+
+// SiteConfigurationStatus is the nested readiness block of a site.
+type SiteConfigurationStatus struct {
+	CurrentStatus      string              `json:"current_status,omitempty"`
+	SitePrecheckStatus *SitePrecheckStatus `json:"site_precheck_status,omitempty"`
+}
+
+// SitePrecheckStatus holds the results of the last ONBOARD or OFFBOARD prechecks.
+type SitePrecheckStatus struct {
+	Phase string `json:"site_precheck_phase,omitempty"`
+	// State is the overall result: PASSED, PASSED_WITH_WARNINGS, FAILED,
+	// MIGRATION_REQUIRED, IN_PROGRESS or NOT_RUN.
+	State   string            `json:"site_precheck_state,omitempty"`
+	Results []SitePrecheckRun `json:"site_precheck_results,omitempty"`
+}
+
+// SitePrecheckRun is the result of one precheck.
+type SitePrecheckRun struct {
+	Name    string `json:"precheck_name,omitempty"`
+	Message string `json:"precheck_message,omitempty"`
+	Status  string `json:"precheck_result_status,omitempty"`
+	RunTime int64  `json:"precheck_last_run_time,omitempty"`
+}
+
+// SiteReadiness returns the readiness state of a site (READY, NOT_READY,
+// ONBOARD_IN_PROGRESS, ...). It is the top-level current_state when present,
+// otherwise status.configuration_status.current_status, and empty if neither is set.
+func SiteReadiness(site *Site) string {
+	if site.CurrentState != "" {
+		return site.CurrentState
+	}
+	if site.Status != nil && site.Status.ConfigurationStatus != nil {
+		return site.Status.ConfigurationStatus.CurrentStatus
+	}
+	return ""
+}
+
+// LatestSitePrecheckTime returns the newest precheck run time on the site (0 if none).
+func LatestSitePrecheckTime(site *Site) int64 {
+	var latest int64
+	if site.Status != nil && site.Status.ConfigurationStatus != nil && site.Status.ConfigurationStatus.SitePrecheckStatus != nil {
+		for _, r := range site.Status.ConfigurationStatus.SitePrecheckStatus.Results {
+			if r.RunTime > latest {
+				latest = r.RunTime
+			}
+		}
+	}
+	return latest
+}
+
+// failedOffboardPrechecks lists OFFBOARD prechecks that failed in a run newer than since.
+func failedOffboardPrechecks(site *Site, since int64) []string {
+	if site.Status == nil || site.Status.ConfigurationStatus == nil {
+		return nil
+	}
+	ps := site.Status.ConfigurationStatus.SitePrecheckStatus
+	if ps == nil || ps.Phase != "OFFBOARD" {
+		return nil
+	}
+	var failed []string
+	for _, r := range ps.Results {
+		if r.Status == "FAILED" && r.RunTime > since {
+			failed = append(failed, fmt.Sprintf("%s: %s", r.Name, r.Message))
+		}
+	}
+	return failed
 }
 
 // SiteList is the response from GET /ssp/sites.
@@ -237,7 +320,7 @@ type SensorRegistrationToken struct {
 	DisplayName          string `json:"display_name"`
 	Description          string `json:"description,omitempty"`
 	Passphrase           string `json:"passphrase,omitempty"`
-	AllowedInstanceCount int    `json:"allowed_instance_count,omitempty"`
+	AllowedInstanceCount int    `json:"allowed_instance_count"`
 	Status               string `json:"status,omitempty"`
 	Expiration           int64  `json:"expiration,omitempty"`
 	UsageCount           int    `json:"usage_count,omitempty"`
@@ -334,7 +417,8 @@ func (s *UpgradeStatus) StepProgressPercent() int {
 
 // AvailableVersionList is the response from GET /ssp/upgrade/available-versions.
 type AvailableVersionList struct {
-	Versions []string `json:"versions"`
+	// The API names the list "versions_for_upgrade".
+	Versions []string `json:"versions_for_upgrade"`
 }
 
 // UpgradeHistoryList is the response from GET /ssp/upgrade/history.
@@ -365,7 +449,8 @@ type NetworkData struct {
 
 // FeatureHealthResponse is the response from GET /ssp/cluster/monitor/feature/health.
 type FeatureHealthResponse struct {
-	OverallStatus string          `json:"overall_status,omitempty"`
+	// The overall platform health is returned as "status".
+	OverallStatus string          `json:"status,omitempty"`
 	Features      []FeatureHealth `json:"features,omitempty"`
 }
 
@@ -611,6 +696,7 @@ func (c *Client) WaitForFeatureDeployment(ctx context.Context, feature string) (
 func (c *Client) WaitForSiteReady(ctx context.Context, siteID string) error {
 	deadline := time.Now().Add(defaultPollTimeout)
 	var lastErr error
+	var lastFailure string
 	for {
 		if time.Now().After(deadline) {
 			if lastErr != nil {
@@ -631,11 +717,14 @@ func (c *Client) WaitForSiteReady(ctx context.Context, siteID string) error {
 			// multi-minute readiness wait; keep polling until the deadline.
 			lastErr = fmt.Errorf("error polling site status: %w", err)
 		} else {
-			// The API uses current_state == READY or connection_status == HEALTHY.
-			if site.CurrentState == "READY" {
+			// connection_status turns HEALTHY early in an onboard, while the site is
+			// still ONBOARD_IN_PROGRESS, so it only counts as ready when the platform
+			// reports no readiness state at all.
+			readiness := SiteReadiness(&site)
+			if readiness == "READY" {
 				return nil
 			}
-			if site.Status != nil && site.Status.ConnectionStatus == "HEALTHY" {
+			if readiness == "" && site.Status != nil && site.Status.ConnectionStatus == "HEALTHY" {
 				return nil
 			}
 			// The real SiteReadiness enum (current_state) has two genuine
@@ -644,9 +733,17 @@ func (c *Client) WaitForSiteReady(ctx context.Context, siteID string) error {
 			// how a 404 above is already treated as terminal. UNKNOWN,
 			// ONBOARD_IN_PROGRESS, and OFFBOARD_IN_PROGRESS are legitimate
 			// non-terminal states, so those keep polling.
-			switch site.CurrentState {
+			// A new onboard briefly reports NOT_READY (about 2s, in its PREPARE phase)
+			// before moving to ONBOARD_IN_PROGRESS, so a failure state only counts when
+			// it is seen on two consecutive polls.
+			switch readiness {
 			case "NOT_READY", "INACTIVE":
-				return fmt.Errorf("site %s reached a terminal failure state: current_state=%s", siteID, site.CurrentState)
+				if readiness == lastFailure {
+					return fmt.Errorf("site %s reached a terminal failure state: current_state=%s", siteID, readiness)
+				}
+				lastFailure = readiness
+			default:
+				lastFailure = ""
 			}
 			// Similarly, connection_status == UNHEALTHY is not always a
 			// permanent failure on its own (current_state is the authoritative
@@ -661,8 +758,59 @@ func (c *Client) WaitForSiteReady(ctx context.Context, siteID string) error {
 	}
 }
 
+// WaitForSitePrechecks polls GET /ssp/sites/{id} until the prechecks of a site
+// created with desired_state PREPARE have finished. PREPARE halts after the
+// prechecks, so the site never reaches READY. It returns nil when they passed
+// (also with warnings) and an error naming the failed prechecks otherwise.
+func (c *Client) WaitForSitePrechecks(ctx context.Context, siteID string) error {
+	deadline := time.Now().Add(defaultPollTimeout)
+	var lastErr error
+	for {
+		if time.Now().After(deadline) {
+			if lastErr != nil {
+				return fmt.Errorf("timed out waiting for the prechecks of site %s (last error: %w)", siteID, lastErr)
+			}
+			return fmt.Errorf("timed out waiting for the prechecks of site %s", siteID)
+		}
+
+		var site Site
+		httpStatus, err := c.Get(ctx, "/ssp/sites/"+siteID, &site)
+		if err != nil {
+			if httpStatus == 404 {
+				return fmt.Errorf("site %s not found during precheck poll", siteID)
+			}
+			lastErr = fmt.Errorf("error polling site status: %w", err)
+		} else if site.Status != nil && site.Status.ConfigurationStatus != nil && site.Status.ConfigurationStatus.SitePrecheckStatus != nil {
+			ps := site.Status.ConfigurationStatus.SitePrecheckStatus
+			switch ps.State {
+			case "PASSED", "PASSED_WITH_WARNINGS":
+				return nil
+			case "FAILED", "MIGRATION_REQUIRED":
+				var failed []string
+				for _, r := range ps.Results {
+					if r.Status != "PASSED" {
+						failed = append(failed, fmt.Sprintf("%s (%s): %s", r.Name, r.Status, r.Message))
+					}
+				}
+				return fmt.Errorf("prechecks for site %s did not pass: state=%s; %s", siteID, ps.State, strings.Join(failed, "; "))
+			}
+			// IN_PROGRESS, NOT_RUN or empty: the prechecks have not finished yet.
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(defaultPollInterval):
+		}
+	}
+}
+
 // WaitForSiteDeleted polls GET /ssp/sites/{id} until a 404 is returned.
-func (c *Client) WaitForSiteDeleted(ctx context.Context, siteID string) error {
+// The platform accepts an offboard request even when an offboard precheck fails
+// and then leaves the site in place, so a precheck that failed in a run newer
+// than precheckSince (see LatestSitePrecheckTime) ends the wait with an error
+// instead of polling until the timeout.
+func (c *Client) WaitForSiteDeleted(ctx context.Context, siteID string, precheckSince int64) error {
 	deadline := time.Now().Add(defaultPollTimeout)
 	var lastErr error
 	for {
@@ -682,6 +830,8 @@ func (c *Client) WaitForSiteDeleted(ctx context.Context, siteID string) error {
 			// Transient errors shouldn't abort a multi-minute deletion wait;
 			// keep polling until the deadline.
 			lastErr = fmt.Errorf("error polling site deletion: %w", err)
+		} else if failed := failedOffboardPrechecks(&site, precheckSince); len(failed) > 0 {
+			return fmt.Errorf("site %s cannot be offboarded, offboard precheck failed: %s", siteID, strings.Join(failed, "; "))
 		}
 
 		select {
@@ -690,6 +840,20 @@ func (c *Client) WaitForSiteDeleted(ctx context.Context, siteID string) error {
 		case <-time.After(defaultPollInterval):
 		}
 	}
+}
+
+// backupNotFoundRe matches the cluster-api body returned by
+// GET /ssp/backup/status/{id} when the backup record does not exist.
+var backupNotFoundRe = regexp.MustCompile(`"error_code"\s*:\s*972011\b`)
+
+// IsBackupNotFound reports whether a GET /ssp/backup/status/{id} call failed
+// because the backup record no longer exists. The API signals this with
+// HTTP 400 and error_code 972011 rather than 404.
+func IsBackupNotFound(httpStatus int, err error) bool {
+	if httpStatus == http.StatusNotFound {
+		return true
+	}
+	return err != nil && httpStatus == http.StatusBadRequest && backupNotFoundRe.MatchString(err.Error())
 }
 
 // WaitForBackupComplete polls GET /ssp/backup/status/{id} until backup reaches terminal state.
@@ -917,16 +1081,28 @@ func (c *Client) DeleteWithBody(ctx context.Context, path string, body interface
 // WaitForSSPAPIReady polls GET /ssp/cluster/monitor/platform/status with provider
 // credentials until a successful (2xx) response is received, confirming the SSP
 // REST API is fully initialised. Retries every 30 s up to the given timeout.
+//
+// HTTP 401/403 and a host without an http(s):// scheme cannot resolve by
+// waiting, so they fail immediately. On timeout the last poll error is
+// included so the cause (bad host, 503 while booting, ...) is visible.
 func (c *Client) WaitForSSPAPIReady(ctx context.Context, timeout time.Duration) error {
+	if !strings.HasPrefix(c.host, "https://") && !strings.HasPrefix(c.host, "http://") {
+		return fmt.Errorf("invalid SSP host %q: must be a full URL starting with https://", c.host)
+	}
 	deadline := time.Now().Add(timeout)
+	var lastErr error
 	for {
-		if time.Now().After(deadline) {
-			return fmt.Errorf("timed out waiting for SSP API (/ssp/cluster/monitor/platform/status) to return HTTP 200")
-		}
 		var status ClusterStatus
-		_, err := c.Get(ctx, "/ssp/cluster/monitor/platform/status", &status)
+		code, err := c.Get(ctx, "/ssp/cluster/monitor/platform/status", &status)
 		if err == nil {
 			return nil
+		}
+		if code == http.StatusUnauthorized || code == http.StatusForbidden {
+			return fmt.Errorf("SSP API rejected the provider credentials: %w", err)
+		}
+		lastErr = err
+		if !time.Now().Add(sspAPIReadyPollInterval).Before(deadline) {
+			return fmt.Errorf("timed out after %s waiting for SSP API (/ssp/cluster/monitor/platform/status) to return a 2xx response; last error: %w", timeout, lastErr)
 		}
 		select {
 		case <-ctx.Done():
