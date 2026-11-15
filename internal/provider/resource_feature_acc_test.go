@@ -8,12 +8,12 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"regexp"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
-	"regexp"
 )
 
 // TestAccFeatureResource exercises ssp_feature's Create (RUN_PRECHECK then

@@ -5,11 +5,11 @@ package provider_test
 
 import (
 	"fmt"
+	"regexp"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
-	"regexp"
 )
 
 func TestAccCloudConnectorConfigResource(t *testing.T) {

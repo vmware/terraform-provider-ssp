@@ -107,7 +107,7 @@ func testAccCheckSensorRegistrationTokenDestroy(s *terraform.State) error {
 	return nil
 }
 
-const testAccTokenName = "ssp_sensor_registration_token.test"
+const testAccSensorRegResourceAddr = "ssp_sensor_registration_token.test"
 
 const (
 	testAccTokenPassphrase  = "SecretPassphrase123!"
@@ -128,7 +128,7 @@ resource "ssp_sensor_registration_token" "test" {
 
 func testAccTokenReplace() resource.ConfigPlanChecks {
 	return resource.ConfigPlanChecks{
-		PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction(testAccTokenName, plancheck.ResourceActionDestroyBeforeCreate)},
+		PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction(testAccSensorRegResourceAddr, plancheck.ResourceActionDestroyBeforeCreate)},
 	}
 }
 
@@ -145,7 +145,7 @@ func testAccTokenStatus(t *testing.T, id string) int {
 func TestAccSensorRegistrationTokenResource_Replacement(t *testing.T) {
 	name := acctest.RandomWithPrefix("tf-acc-token")
 	var ids []string
-	capture := resource.TestCheckResourceAttrWith(testAccTokenName, "id", func(v string) error {
+	capture := resource.TestCheckResourceAttrWith(testAccSensorRegResourceAddr, "id", func(v string) error {
 		ids = append(ids, v)
 		return nil
 	})
@@ -179,21 +179,21 @@ func TestAccSensorRegistrationTokenResource_Replacement(t *testing.T) {
 				Config: testAccTokenConfig(name, testAccTokenPassphrase, ""),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					capture,
-					resource.TestCheckResourceAttr(testAccTokenName, "display_name", name),
-					resource.TestCheckResourceAttr(testAccTokenName, "allowed_instance_count", "1"),
-					resource.TestCheckResourceAttr(testAccTokenName, "status", "AVAILABLE"),
-					resource.TestCheckResourceAttr(testAccTokenName, "usage_count", "0"),
-					resource.TestCheckResourceAttr(testAccTokenName, "number_available", "1"),
-					resource.TestCheckNoResourceAttr(testAccTokenName, "description"),
-					resource.TestCheckResourceAttrSet(testAccTokenName, "expiration"),
-					resource.TestCheckResourceAttrSet(testAccTokenName, "registration_manifest"),
+					resource.TestCheckResourceAttr(testAccSensorRegResourceAddr, "display_name", name),
+					resource.TestCheckResourceAttr(testAccSensorRegResourceAddr, "allowed_instance_count", "1"),
+					resource.TestCheckResourceAttr(testAccSensorRegResourceAddr, "status", "AVAILABLE"),
+					resource.TestCheckResourceAttr(testAccSensorRegResourceAddr, "usage_count", "0"),
+					resource.TestCheckResourceAttr(testAccSensorRegResourceAddr, "number_available", "1"),
+					resource.TestCheckNoResourceAttr(testAccSensorRegResourceAddr, "description"),
+					resource.TestCheckResourceAttrSet(testAccSensorRegResourceAddr, "expiration"),
+					resource.TestCheckResourceAttrSet(testAccSensorRegResourceAddr, "registration_manifest"),
 				),
 			},
 			{Config: testAccTokenConfig(name, testAccTokenPassphrase, ""), PlanOnly: true},
 			{
 				Config:           testAccTokenConfig(name, testAccTokenPassphrase, `description = "first description"`),
 				ConfigPlanChecks: testAccTokenReplace(),
-				Check:            resource.ComposeAggregateTestCheckFunc(check(), resource.TestCheckResourceAttr(testAccTokenName, "description", "first description")),
+				Check:            resource.ComposeAggregateTestCheckFunc(check(), resource.TestCheckResourceAttr(testAccSensorRegResourceAddr, "description", "first description")),
 			},
 			{
 				Config:           testAccTokenConfig(name+"-renamed", testAccTokenPassphrase, `description = "first description"`),
@@ -203,7 +203,7 @@ func TestAccSensorRegistrationTokenResource_Replacement(t *testing.T) {
 			{
 				Config:           testAccTokenConfig(name+"-renamed", testAccTokenPassphrase, "description = \"first description\"\nallowed_instance_count = 3"),
 				ConfigPlanChecks: testAccTokenReplace(),
-				Check:            resource.ComposeAggregateTestCheckFunc(check(), resource.TestCheckResourceAttr(testAccTokenName, "number_available", "3")),
+				Check:            resource.ComposeAggregateTestCheckFunc(check(), resource.TestCheckResourceAttr(testAccSensorRegResourceAddr, "number_available", "3")),
 			},
 			{
 				Config:           testAccTokenConfig(name+"-renamed", testAccTokenPassphrase2, "description = \"first description\"\nallowed_instance_count = 3"),
@@ -273,22 +273,22 @@ func TestAccSensorRegistrationTokenResource_Boundaries(t *testing.T) {
 		Steps: []resource.TestStep{
 			{
 				Config: testAccTokenConfig("t-1", testAccTokenPassphrase, ""),
-				Check:  resource.TestCheckResourceAttr(testAccTokenName, "display_name", "t-1"),
+				Check:  resource.TestCheckResourceAttr(testAccSensorRegResourceAddr, "display_name", "t-1"),
 			},
 			{
 				Config: testAccTokenConfig(long, testAccTokenPassphrase, ""),
-				Check:  resource.TestCheckResourceAttr(testAccTokenName, "display_name", long),
+				Check:  resource.TestCheckResourceAttr(testAccSensorRegResourceAddr, "display_name", long),
 			},
 			{
 				Config: testAccTokenConfig(long, testAccTokenPassphrase, "allowed_instance_count = 10"),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr(testAccTokenName, "allowed_instance_count", "10"),
-					resource.TestCheckResourceAttr(testAccTokenName, "number_available", "10"),
+					resource.TestCheckResourceAttr(testAccSensorRegResourceAddr, "allowed_instance_count", "10"),
+					resource.TestCheckResourceAttr(testAccSensorRegResourceAddr, "number_available", "10"),
 				),
 			},
 			{
 				Config: testAccTokenConfig(long, testAccTokenPassphrase, fmt.Sprintf("description = %q", testAccStringOfLen(1024, "d"))),
-				Check:  resource.TestCheckResourceAttr(testAccTokenName, "description", testAccStringOfLen(1024, "d")),
+				Check:  resource.TestCheckResourceAttr(testAccSensorRegResourceAddr, "description", testAccStringOfLen(1024, "d")),
 			},
 			{
 				Config: testAccTokenConfig(long, testAccTokenPassphrase, fmt.Sprintf("description = %q", testAccStringOfLen(1024, "d"))),
@@ -297,7 +297,7 @@ func TestAccSensorRegistrationTokenResource_Boundaries(t *testing.T) {
 			},
 			{
 				Config: testAccTokenConfig(long, testAccTokenPassphrase, `description = ""`),
-				Check:  resource.TestCheckResourceAttr(testAccTokenName, "description", ""),
+				Check:  resource.TestCheckResourceAttr(testAccSensorRegResourceAddr, "description", ""),
 			},
 			{Config: testAccTokenConfig(long, testAccTokenPassphrase, `description = ""`), PlanOnly: true},
 		},
@@ -317,7 +317,7 @@ func TestAccSensorRegistrationTokenResource_Drift(t *testing.T) {
 		Steps: []resource.TestStep{
 			{
 				Config: cfg,
-				Check: resource.TestCheckResourceAttrWith(testAccTokenName, "id", func(v string) error {
+				Check: resource.TestCheckResourceAttrWith(testAccSensorRegResourceAddr, "id", func(v string) error {
 					firstID = v
 					return nil
 				}),
@@ -331,9 +331,9 @@ func TestAccSensorRegistrationTokenResource_Drift(t *testing.T) {
 				},
 				Config: cfg,
 				ConfigPlanChecks: resource.ConfigPlanChecks{
-					PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction(testAccTokenName, plancheck.ResourceActionCreate)},
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction(testAccSensorRegResourceAddr, plancheck.ResourceActionCreate)},
 				},
-				Check: resource.TestCheckResourceAttrWith(testAccTokenName, "id", func(v string) error {
+				Check: resource.TestCheckResourceAttrWith(testAccSensorRegResourceAddr, "id", func(v string) error {
 					if v == firstID {
 						return fmt.Errorf("the token was not created again, id %s is unchanged", v)
 					}
@@ -356,7 +356,7 @@ func TestAccSensorRegistrationTokenResource_ImportUnknown(t *testing.T) {
 		Steps: []resource.TestStep{
 			{Config: testAccTokenConfig(name, testAccTokenPassphrase, "")},
 			{
-				ResourceName:  testAccTokenName,
+				ResourceName:  testAccSensorRegResourceAddr,
 				ImportState:   true,
 				ImportStateId: "00000000-0000-0000-0000-000000000000",
 				ExpectError:   regexp.MustCompile(`Token not found`),
