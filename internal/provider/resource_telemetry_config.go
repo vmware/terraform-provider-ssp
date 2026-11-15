@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
@@ -24,6 +25,7 @@ import (
 
 var _ resource.Resource = &TelemetryConfigResource{}
 var _ resource.ResourceWithImportState = &TelemetryConfigResource{}
+var _ resource.ResourceWithValidateConfig = &TelemetryConfigResource{}
 
 func NewTelemetryConfigResource() resource.Resource {
 	return &TelemetryConfigResource{}
@@ -61,6 +63,40 @@ var telemetryScheduleAttrTypes = map[string]attr.Type{
 	"minutes":        types.Int64Type,
 	"day_of_week":    types.StringType,
 	"day_of_month":   types.Int64Type,
+}
+
+const (
+	telemetryWeekly  = "WEEKLY_TELEMETRY_SCHEDULE"
+	telemetryMonthly = "MONTHLY_TELEMETRY_SCHEDULE"
+)
+
+// ValidateConfig rejects day_of_week / day_of_month on frequencies where the API would
+// silently ignore them (and then return a value that contradicts the configuration).
+func (r *TelemetryConfigResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var data TelemetryConfigResourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
+	if resp.Diagnostics.HasError() || data.TelemetrySchedule.IsNull() || data.TelemetrySchedule.IsUnknown() {
+		return
+	}
+	var sched TelemetryScheduleModel
+	resp.Diagnostics.Append(data.TelemetrySchedule.As(ctx, &sched, objectAsOptions)...)
+	if resp.Diagnostics.HasError() || sched.FrequencyType.IsUnknown() {
+		return
+	}
+	freq := sched.FrequencyType.ValueString()
+	if sched.FrequencyType.IsNull() {
+		freq = telemetryWeekly // schema default
+	}
+	if !sched.DayOfWeek.IsNull() && !sched.DayOfWeek.IsUnknown() && freq != telemetryWeekly {
+		resp.Diagnostics.AddAttributeError(path.Root("telemetry_schedule").AtName("day_of_week"),
+			"Invalid telemetry schedule",
+			"day_of_week is only valid when frequency_type is "+telemetryWeekly+", got "+freq+".")
+	}
+	if !sched.DayOfMonth.IsNull() && !sched.DayOfMonth.IsUnknown() && freq != telemetryMonthly {
+		resp.Diagnostics.AddAttributeError(path.Root("telemetry_schedule").AtName("day_of_month"),
+			"Invalid telemetry schedule",
+			"day_of_month is only valid when frequency_type is "+telemetryMonthly+", got "+freq+".")
+	}
 }
 
 func (r *TelemetryConfigResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -133,9 +169,8 @@ func (r *TelemetryConfigResource) Schema(ctx context.Context, req resource.Schem
 					"day_of_week": schema.StringAttribute{
 						Optional: true,
 						Computed: true,
-						Default:  stringdefault.StaticString("SUNDAY"),
-						MarkdownDescription: "Day of the week the telemetry upload runs. Only applicable when `frequency_type` is " +
-							"`WEEKLY_TELEMETRY_SCHEDULE`. Defaults to `SUNDAY`.",
+						MarkdownDescription: "Day of the week the telemetry upload runs. Only valid when `frequency_type` is " +
+							"`WEEKLY_TELEMETRY_SCHEDULE`, where the platform defaults it to `SUNDAY`. Null for other frequencies.",
 						Validators: []validator.String{
 							stringvalidator.OneOf("SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"),
 						},
@@ -143,9 +178,8 @@ func (r *TelemetryConfigResource) Schema(ctx context.Context, req resource.Schem
 					"day_of_month": schema.Int64Attribute{
 						Optional: true,
 						Computed: true,
-						Default:  int64default.StaticInt64(1),
-						MarkdownDescription: "Day of the month (1-31) the telemetry upload runs. Only applicable when `frequency_type` is " +
-							"`MONTHLY_TELEMETRY_SCHEDULE`. Defaults to `1`.",
+						MarkdownDescription: "Day of the month (1-31) the telemetry upload runs. Only valid when `frequency_type` is " +
+							"`MONTHLY_TELEMETRY_SCHEDULE`, where the platform defaults it to `1`. Null for other frequencies.",
 						Validators: []validator.Int64{
 							int64validator.Between(1, 31),
 						},
@@ -303,7 +337,13 @@ func mapTelemetryToState(ctx context.Context, result *client.TelemetryConfig, m 
 	m.ID = types.StringValue("singleton")
 	m.CeipAcceptance = types.BoolValue(result.CeipAcceptance)
 	m.TelemetryAgreementDisplayed = types.BoolValue(result.TelemetryAgreementDisplayed)
-	m.TelemetryCollectorInstanceID = types.StringValue(result.TelemetryCollectorInstanceID)
+	// The collector ID is assigned by the platform only after CEIP is enabled. Keep it
+	// null (not "") until then so UseStateForUnknown does not pin an empty value that
+	// the next apply would contradict.
+	m.TelemetryCollectorInstanceID = types.StringNull()
+	if result.TelemetryCollectorInstanceID != "" {
+		m.TelemetryCollectorInstanceID = types.StringValue(result.TelemetryCollectorInstanceID)
+	}
 
 	schedule, diags := telemetryScheduleFromAPI(ctx, result.TelemetrySchedule)
 	m.TelemetrySchedule = schedule
@@ -320,13 +360,20 @@ func telemetryScheduleToAPI(ctx context.Context, o types.Object) (*client.Teleme
 	if diags.HasError() {
 		return nil, diags
 	}
-	return &client.TelemetrySchedule{
+	out := &client.TelemetrySchedule{
 		FrequencyType: m.FrequencyType.ValueString(),
 		HourOfDay:     int(m.HourOfDay.ValueInt64()),
 		Minutes:       int(m.Minutes.ValueInt64()),
-		DayOfWeek:     m.DayOfWeek.ValueString(),
-		DayOfMonth:    int(m.DayOfMonth.ValueInt64()),
-	}, nil
+	}
+	// Send only the field that belongs to the chosen frequency; the API picks its own
+	// default (SUNDAY / 1) when it is absent.
+	switch out.FrequencyType {
+	case telemetryWeekly:
+		out.DayOfWeek = m.DayOfWeek.ValueString()
+	case telemetryMonthly:
+		out.DayOfMonth = int(m.DayOfMonth.ValueInt64())
+	}
+	return out, nil
 }
 
 // telemetryScheduleFromAPI converts the API response shape to the Terraform nested object.
@@ -334,11 +381,20 @@ func telemetryScheduleFromAPI(ctx context.Context, s *client.TelemetrySchedule) 
 	if s == nil {
 		return types.ObjectNull(telemetryScheduleAttrTypes), nil
 	}
+	// The API omits day_of_week / day_of_month when they do not apply to the frequency.
+	dayOfWeek := types.StringNull()
+	if s.DayOfWeek != "" {
+		dayOfWeek = types.StringValue(s.DayOfWeek)
+	}
+	dayOfMonth := types.Int64Null()
+	if s.DayOfMonth != 0 {
+		dayOfMonth = types.Int64Value(int64(s.DayOfMonth))
+	}
 	return types.ObjectValueFrom(ctx, telemetryScheduleAttrTypes, &TelemetryScheduleModel{
 		FrequencyType: types.StringValue(s.FrequencyType),
 		HourOfDay:     types.Int64Value(int64(s.HourOfDay)),
 		Minutes:       types.Int64Value(int64(s.Minutes)),
-		DayOfWeek:     types.StringValue(s.DayOfWeek),
-		DayOfMonth:    types.Int64Value(int64(s.DayOfMonth)),
+		DayOfWeek:     dayOfWeek,
+		DayOfMonth:    dayOfMonth,
 	})
 }

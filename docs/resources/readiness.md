@@ -6,6 +6,7 @@ description: |-
   Waits for the SSP platform API to become ready before allowing dependent resources to proceed.
   During Create, polls GET /ssp/cluster/monitor/platform/status with the provider credentials
   every 30 s until HTTP 200 is returned, confirming the cluster is operational.
+  Authentication failures (HTTP 401/403) fail immediately; on timeout the last error is reported.
   On subsequent plan/apply cycles the resource is a no-op. Destroy and recreate it to
   re-run the readiness check (e.g. after a platform redeployment).
 ---
@@ -16,6 +17,7 @@ Waits for the SSP platform API to become ready before allowing dependent resourc
 
 During `Create`, polls `GET /ssp/cluster/monitor/platform/status` with the provider credentials
 every 30 s until HTTP 200 is returned, confirming the cluster is operational.
+Authentication failures (HTTP 401/403) fail immediately; on timeout the last error is reported.
 
 On subsequent plan/apply cycles the resource is a no-op. Destroy and recreate it to
 re-run the readiness check (e.g. after a platform redeployment).
@@ -25,7 +27,7 @@ re-run the readiness check (e.g. after a platform redeployment).
 
 ### Optional
 
-- `timeout_minutes` (Number) Maximum number of minutes to wait for the SSP API to return HTTP 200. Defaults to `20`.
+- `timeout_minutes` (Number) Maximum number of minutes to wait for the SSP API to return HTTP 200. Must be at least `1`. Defaults to `20`.
 
 ### Read-Only
 

@@ -6,6 +6,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"net/url"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
@@ -99,7 +100,7 @@ func (d *SiteDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 	}
 
 	var site client.Site
-	status, err := d.client.Get(ctx, "/ssp/sites/"+data.ID.ValueString(), &site)
+	status, err := d.client.Get(ctx, "/ssp/sites/"+url.PathEscape(data.ID.ValueString()), &site)
 	if status == 404 {
 		resp.Diagnostics.AddError("Site not found", fmt.Sprintf("No site with ID %s", data.ID.ValueString()))
 		return
@@ -111,7 +112,7 @@ func (d *SiteDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 
 	data.SiteType = types.StringValue(site.SiteType)
 	data.SiteName = types.StringValue(site.SiteName)
-	data.CurrentState = types.StringValue(site.CurrentState)
+	data.CurrentState = types.StringValue(client.SiteReadiness(&site))
 
 	if site.Status != nil {
 		data.ConnectionStatus = types.StringValue(site.Status.ConnectionStatus)

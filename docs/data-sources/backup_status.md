@@ -29,7 +29,7 @@ Read-Only:
 - `backup_end_time` (Number) End time as Unix epoch in milliseconds.
 - `backup_id` (String) Backup job UUID.
 - `backup_start_time` (Number) Start time as Unix epoch in milliseconds.
-- `backup_trigger_type` (String) Trigger: ON_DEMAND or RECURRING.
+- `backup_trigger_type` (String) Trigger: MANUAL, SCHEDULER or AUTOMATIC.
 - `backup_type` (String) Backup type: FULL_BACKUP.
 - `progress` (Number) Completion percentage (0–100).
 - `progress_message` (String) Human-readable progress description.

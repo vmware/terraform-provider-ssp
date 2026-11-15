@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
+	"sync/atomic"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
@@ -81,6 +83,68 @@ func TestUnitBackupResource(t *testing.T) {
 					resource.TestCheckResourceAttr("ssp_backup.test", "no_of_entities", "42"),
 					resource.TestCheckResourceAttr("ssp_backup.test", "error_messages.#", "0"),
 				),
+			},
+		},
+	})
+}
+
+// TestUnitBackupResource_APIErrorSurfaced verifies that the API's error body
+// (status code, error_code and message) reaches the user unchanged when the
+// backup cannot be started, and that nothing is left in state.
+func TestUnitBackupResource_APIErrorSurfaced(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /ssp/backup", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error_code":972051,"error_message":"Registered NSX manager site is not in Ready state.","module_name":"cluster-api"}`))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:      testUnitBackupConfig(srv.URL),
+				ExpectError: regexp.MustCompile(`(?s)API error 400.*972051.*Registered NSX manager\s+site is not in Ready state`),
+			},
+		},
+	})
+}
+
+// TestUnitBackupResource_RemovedWhenRecordPurged verifies that a refresh drops
+// the resource from state when the status endpoint reports the backup as
+// unknown. The real API answers HTTP 400 with error_code 972011 for this,
+// not 404.
+func TestUnitBackupResource_RemovedWhenRecordPurged(t *testing.T) {
+	var purged atomic.Bool
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /ssp/backup", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "backup-1"})
+	})
+	mux.HandleFunc("GET /ssp/backup/status/backup-1", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if purged.Load() {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error_code":972011,"error_message":"Backup status not found for ID: backup-1.","module_name":"cluster-api"}`))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "backup-1", "status": "SUCCESS", "backup_type": "FULL_BACKUP", "progress": 100})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{Config: testUnitBackupConfig(srv.URL)},
+			{
+				PreConfig:          func() { purged.Store(true) },
+				Config:             testUnitBackupConfig(srv.URL),
+				PlanOnly:           true,
+				ExpectNonEmptyPlan: true, // resource dropped from state => plan wants to re-create it
 			},
 		},
 	})

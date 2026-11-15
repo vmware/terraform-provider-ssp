@@ -6,6 +6,7 @@ description: |-
   Manages the remote backup server (SFTP) configuration for the SSP platform.
   This is a singleton resource — only one backup configuration can exist per SSP instance.
   Use terraform import ssp_backup_config.this singleton to adopt an existing configuration.
+  Destroy does not delete the configuration. The SSP API has no DELETE for the backup configuration and PUT requires every field to be set to a valid value, so it cannot be cleared. terraform destroy only removes this resource from Terraform state; the backup server settings remain configured on the SSP platform until they are overwritten.
   Corresponds to GET/PUT /ssp/backup/config.
 ---
 
@@ -15,6 +16,8 @@ Manages the remote backup server (SFTP) configuration for the SSP platform.
 
 This is a singleton resource — only one backup configuration can exist per SSP instance.
 Use `terraform import ssp_backup_config.this singleton` to adopt an existing configuration.
+
+Destroy does not delete the configuration The SSP API has no `DELETE` for the backup configuration and `PUT` requires every field to be set to a valid value, so it cannot be cleared. `terraform destroy` only removes this resource from Terraform state; the backup server settings remain configured on the SSP platform until they are overwritten.
 
 Corresponds to `GET/PUT /ssp/backup/config`.
 

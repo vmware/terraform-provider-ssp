@@ -5,6 +5,7 @@ package provider
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
@@ -56,7 +57,7 @@ func (d *BackupStatusDataSource) Schema(ctx context.Context, req datasource.Sche
 						"backup_id":           schema.StringAttribute{Computed: true, MarkdownDescription: "Backup job UUID."},
 						"status":              schema.StringAttribute{Computed: true, MarkdownDescription: "Job status: IN_PROGRESS, SUCCESS, FAILED."},
 						"backup_type":         schema.StringAttribute{Computed: true, MarkdownDescription: "Backup type: FULL_BACKUP."},
-						"backup_trigger_type": schema.StringAttribute{Computed: true, MarkdownDescription: "Trigger: ON_DEMAND or RECURRING."},
+						"backup_trigger_type": schema.StringAttribute{Computed: true, MarkdownDescription: "Trigger: MANUAL, SCHEDULER or AUTOMATIC."},
 						"backup_start_time":   schema.Int64Attribute{Computed: true, MarkdownDescription: "Start time as Unix epoch in milliseconds."},
 						"backup_end_time":     schema.Int64Attribute{Computed: true, MarkdownDescription: "End time as Unix epoch in milliseconds."},
 						"progress":            schema.Int64Attribute{Computed: true, MarkdownDescription: "Completion percentage (0–100)."},
@@ -81,18 +82,29 @@ func (d *BackupStatusDataSource) Configure(ctx context.Context, req datasource.C
 	d.client = c
 }
 
+// backupStatusPageSize is the number of backup records requested per call.
+const backupStatusPageSize = 1000
+
 func (d *BackupStatusDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
 	var data BackupStatusDataSourceModel
 
-	var list client.BackupStatusList
-	_, err := d.client.Get(ctx, "/ssp/backup/status", &list)
-	if err != nil {
-		resp.Diagnostics.AddError("Error reading backup status", err.Error())
-		return
+	// The platform returns only 10 records per call by default, so read every page.
+	var records []client.BackupStatus
+	for {
+		var page client.BackupStatusList
+		path := fmt.Sprintf("/ssp/backup/status?offset=%d&page_size=%d", len(records), backupStatusPageSize)
+		if _, err := d.client.Get(ctx, path, &page); err != nil {
+			resp.Diagnostics.AddError("Error reading backup status", err.Error())
+			return
+		}
+		records = append(records, page.Result...)
+		if len(page.Result) == 0 || len(records) >= page.TotalResultCount {
+			break
+		}
 	}
 
-	data.Results = make([]BackupStatusModel, len(list.Results))
-	for i, b := range list.Results {
+	data.Results = make([]BackupStatusModel, len(records))
+	for i, b := range records {
 		data.Results[i] = BackupStatusModel{
 			BackupID:          types.StringValue(b.ID),
 			Status:            types.StringValue(b.Status),

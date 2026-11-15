@@ -218,9 +218,13 @@ func (r *SensorRegistrationTokenResource) ImportState(ctx context.Context, req r
 func mapTokenToState(result *client.SensorRegistrationToken, m *SensorRegistrationTokenResourceModel) {
 	m.ID = types.StringValue(result.ID)
 	m.DisplayName = types.StringValue(result.DisplayName)
-	if result.Description != "" {
+	switch {
+	case result.Description != "":
 		m.Description = types.StringValue(result.Description)
-	} else {
+	case !m.Description.IsNull() && !m.Description.IsUnknown():
+		// A configured "" is echoed back as "", keep it so state matches the plan.
+		m.Description = types.StringValue("")
+	default:
 		m.Description = types.StringNull()
 	}
 	m.AllowedInstanceCount = types.Int64Value(int64(result.AllowedInstanceCount))

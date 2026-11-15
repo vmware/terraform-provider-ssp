@@ -20,7 +20,8 @@ func newUpgradeAvailableVersionsDataSourceMockServer(t *testing.T) *httptest.Ser
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"versions": []string{"5.2.1", "5.3.0"},
+			"current_version":      "5.2.0",
+			"versions_for_upgrade": []string{"5.2.1", "5.3.0"},
 		})
 	})
 

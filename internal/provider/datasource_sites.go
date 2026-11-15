@@ -40,7 +40,7 @@ func (d *SitesDataSource) Metadata(ctx context.Context, req datasource.MetadataR
 
 func (d *SitesDataSource) Schema(ctx context.Context, req datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Lists all sites (NSX Manager, AVI, SSP) currently connected to the SSP platform.\n\n" +
+		MarkdownDescription: "Lists all sites currently connected to the SSP platform. Only NSX Manager sites can be onboarded to SSP; AVI and SSP sites exist only with License Hub.\n\n" +
 			"Corresponds to `GET /ssp/sites`.",
 		Attributes: map[string]schema.Attribute{
 			"sites": schema.ListNestedAttribute{
@@ -49,7 +49,7 @@ func (d *SitesDataSource) Schema(ctx context.Context, req datasource.SchemaReque
 				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
 						"id":                schema.StringAttribute{Computed: true, MarkdownDescription: "Site UUID."},
-						"site_type":         schema.StringAttribute{Computed: true, MarkdownDescription: "Site type: NSX_MANAGER, AVI, or SSP."},
+						"site_type":         schema.StringAttribute{Computed: true, MarkdownDescription: "Site type: NSX_MANAGER, AVI, or SSP. Only NSX_MANAGER can be onboarded to SSP; AVI and SSP require License Hub."},
 						"site_name":         schema.StringAttribute{Computed: true, MarkdownDescription: "Site display name."},
 						"current_state":     schema.StringAttribute{Computed: true, MarkdownDescription: "Current readiness: READY, NOT_READY, INACTIVE, UNKNOWN."},
 						"connection_status": schema.StringAttribute{Computed: true, MarkdownDescription: "Connection status: HEALTHY, UNHEALTHY, UNKNOWN."},
@@ -92,7 +92,7 @@ func (d *SitesDataSource) Read(ctx context.Context, req datasource.ReadRequest, 
 			ID:               types.StringValue(s.ID),
 			SiteType:         types.StringValue(s.SiteType),
 			SiteName:         types.StringValue(s.SiteName),
-			CurrentState:     types.StringValue(s.CurrentState),
+			CurrentState:     types.StringValue(client.SiteReadiness(&s)),
 			ConnectionStatus: types.StringValue(connStatus),
 		}
 	}
