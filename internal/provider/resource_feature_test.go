@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
 
@@ -166,6 +167,55 @@ resource "ssp_feature" "test" {
 					defer m.mu.Unlock()
 					if m.lastAction != "FORCE_UNDEPLOY" {
 						t.Fatalf("expected Delete to issue action=FORCE_UNDEPLOY, last action was %q", m.lastAction)
+					}
+					return nil
+				},
+			},
+		},
+	})
+}
+
+// Changing force_undeploy on a deployed feature is an in-place update. It used to
+// fail with "inconsistent result after apply" because Update left the computed
+// status attributes unset. The new value must then be what Delete acts on.
+func TestUnitFeatureResource_UpdateForceUndeploy(t *testing.T) {
+	srv, m := newFeatureMockServer(t)
+	cfg := func(force string) string {
+		return testUnitRuntimeProviderConfig(srv.URL) + `
+resource "ssp_feature" "test" {
+  feature        = "NDR"
+  force_undeploy = ` + force + `
+}
+`
+	}
+
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: cfg("false"),
+				Check:  resource.TestCheckResourceAttr("ssp_feature.test", "force_undeploy", "false"),
+			},
+			{
+				Config: cfg("true"),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectResourceAction("ssp_feature.test", plancheck.ResourceActionUpdate)},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ssp_feature.test", "force_undeploy", "true"),
+					resource.TestCheckResourceAttr("ssp_feature.test", "id", "NDR"),
+					resource.TestCheckResourceAttr("ssp_feature.test", "overall_status", "DEPLOYMENT_SUCCESSFUL"),
+					resource.TestCheckResourceAttr("ssp_feature.test", "overall_progress", "100"),
+				),
+			},
+			{Config: cfg("true"), PlanOnly: true},
+			{
+				Config: testUnitRuntimeProviderConfig(srv.URL),
+				Check: func(s *terraform.State) error {
+					m.mu.Lock()
+					defer m.mu.Unlock()
+					if m.lastAction != "FORCE_UNDEPLOY" {
+						t.Fatalf("expected Delete to issue FORCE_UNDEPLOY after the update, last action was %q", m.lastAction)
 					}
 					return nil
 				},

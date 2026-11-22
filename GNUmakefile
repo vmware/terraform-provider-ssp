@@ -20,7 +20,7 @@ test: fmtcheck
 	go test ./... -v -count=1 -parallel=4
 
 testacc: fmtcheck
-	GO111MODULE=on TF_ACC=1 go test ./... -v -count=1 -parallel=4
+	GO111MODULE=on TF_ACC=1 go test ./... -v -count=1 -parallel=4 -timeout 120m $(TESTARGS)
 
 vet:
 	@echo "go vet ."

@@ -156,13 +156,13 @@ func TestAccSitesDataSource(t *testing.T) {
 	})
 }
 
-// testAccFirstSiteID returns the id of the first onboarded site, or skips.
+// testAccFirstSiteID returns the id of the first onboarded site, or fails the test.
 func testAccFirstSiteID(t *testing.T) string {
 	t.Helper()
 
 	sites, _ := testAccAPIGet(t, "/ssp/sites")["sites"].([]any)
 	if len(sites) == 0 {
-		t.Skip("no site is onboarded to the SSP; onboard one to run this test")
+		t.Fatal("no site is onboarded to the SSP; onboard one to run this test")
 	}
 	site, _ := sites[0].(map[string]any)
 	return fmt.Sprint(site["id"])
@@ -261,7 +261,7 @@ func TestAccSiteDataSource_QueryStringOnRealID(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck: func() {
 			testAccSSPRuntimePreCheck(t)
-			testAccFirstSiteID(t) // skips when no site is onboarded
+			testAccFirstSiteID(t) // fails when no site is onboarded
 		},
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{

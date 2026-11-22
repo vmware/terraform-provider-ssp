@@ -23,7 +23,7 @@ type testAccBackupFields struct {
 }
 
 // testAccBackupSettings reads the SFTP backup server from the environment, and
-// skips the test without one. The password, passphrase and key are never kept in
+// fails the test without one. The password, passphrase and key are never kept in
 // the repository.
 func testAccBackupSettings(t *testing.T) testAccBackupFields {
 	t.Helper()

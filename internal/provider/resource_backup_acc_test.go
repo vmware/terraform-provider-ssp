@@ -26,14 +26,14 @@ resource "ssp_backup" "test" {
 `, attrs)
 }
 
-// testAccRequireBackupConfigured skips the test unless the platform already has
+// testAccRequireBackupConfigured fails the test unless the platform already has
 // a backup server configured; taking a backup needs one.
 func testAccRequireBackupConfigured(t *testing.T) {
 	t.Helper()
 
 	status, body := testAccAPIRequest(t, http.MethodGet, "/ssp/backup/config", nil)
 	if status != http.StatusOK || !regexp.MustCompile(`"server_address"\s*:\s*"[^"]+"`).Match(body) {
-		t.Skip("a backup server must be configured on the platform (see ssp_backup_config) to take a backup")
+		t.Fatal("a backup server must be configured on the platform (see ssp_backup_config) to take a backup")
 	}
 }
 

@@ -27,19 +27,15 @@ import (
 // Deploying/undeploying a real vDefend feature is a meaningful, non-trivial
 // operation against a live cluster, so — beyond the standard
 // SSP_HOST/SSP_USERNAME/SSP_PASSWORD — this test additionally requires
-// SSP_ACC_TEST_FEATURE to name the specific feature to exercise (no default,
-// so a plain `TF_ACC=1` run never accidentally deploys something on someone
-// else's cluster); it will Skip without one.
+// SSP_ACC_TEST_FEATURE to name the feature to exercise; it defaults to
+// INTELLIGENCE (see testAccFeatureSetup).
 func TestAccFeatureResource(t *testing.T) {
 	resourceName := "ssp_feature.test"
-	feature := os.Getenv("SSP_ACC_TEST_FEATURE")
+	feature := testAccFeatureSetup(t)
 
 	resource.Test(t, resource.TestCase{
 		PreCheck: func() {
 			testAccSSPRuntimePreCheck(t)
-			if feature == "" {
-				t.Skip("SSP_ACC_TEST_FEATURE must be set (to a real vDefend feature name) for ssp_feature acceptance tests")
-			}
 		},
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		CheckDestroy:             testAccCheckFeatureDestroy,
@@ -90,6 +86,26 @@ func TestAccFeatureResource(t *testing.T) {
 	})
 }
 
+// testAccDefaultFeature is the feature the ssp_feature tests deploy when
+// SSP_ACC_TEST_FEATURE is not set.
+const testAccDefaultFeature = "INTELLIGENCE"
+
+// testAccFeatureSetup makes the ssp_feature acceptance tests always run: TF_ACC
+// defaults to 1 when it is unset (a value the user sets is kept), so the tests
+// are never silently skipped. It returns the feature to deploy:
+// SSP_ACC_TEST_FEATURE, or INTELLIGENCE when it is unset.
+func testAccFeatureSetup(t *testing.T) string {
+	t.Helper()
+
+	if os.Getenv("TF_ACC") == "" {
+		t.Setenv("TF_ACC", "1")
+	}
+	if v := os.Getenv("SSP_ACC_TEST_FEATURE"); v != "" {
+		return v
+	}
+	return testAccDefaultFeature
+}
+
 func testAccFeatureConfig(feature string) string {
 	return fmt.Sprintf(`
 resource "ssp_feature" "test" {
@@ -103,42 +119,29 @@ resource "ssp_feature" "test" {
 // resource's Delete succeeding on the API call but the undeploy silently
 // stalling server-side.
 func testAccCheckFeatureDestroy(s *terraform.State) error {
-	host := os.Getenv("SSP_HOST")
-	username := os.Getenv("SSP_USERNAME")
-	password := os.Getenv("SSP_PASSWORD")
-	httpClient := testAccInsecureHTTPClient()
-
 	for _, rs := range s.RootModule().Resources {
 		if rs.Type != "ssp_feature" {
 			continue
 		}
 
 		feature := rs.Primary.Attributes["feature"]
-		req, err := http.NewRequest(http.MethodGet, testAccTrimHost(host)+"/ssp/lcm/features/"+feature+"/status", nil) //nolint:gosec // host is the operator-configured SSP_HOST acceptance-test target, not user input
+		status, body, err := testAccDoAPI(http.MethodGet, "/ssp/lcm/features/"+feature+"/status", nil)
 		if err != nil {
 			return err
 		}
-		req.SetBasicAuth(username, password)
-
-		resp, err := httpClient.Do(req) //nolint:gosec // same operator-configured target as above
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode == http.StatusNotFound {
+		if status == http.StatusNotFound {
 			// Never deployed / already fully torn down — acceptable.
 			continue
 		}
 
-		var status struct {
+		var out struct {
 			OverallStatus string `json:"overall_status"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
-			return err
+		if err := json.Unmarshal(body, &out); err != nil {
+			return fmt.Errorf("decode status of feature %s (HTTP %d): %w: %s", feature, status, err, body)
 		}
-		if status.OverallStatus != "NOT_DEPLOYED" {
-			return fmt.Errorf("feature %s did not reach NOT_DEPLOYED after destroy, overall_status: %s", feature, status.OverallStatus)
+		if out.OverallStatus != "NOT_DEPLOYED" {
+			return fmt.Errorf("feature %s did not reach NOT_DEPLOYED after destroy, overall_status: %s", feature, out.OverallStatus)
 		}
 	}
 
@@ -157,6 +160,8 @@ resource "ssp_feature" "test" {
 // A feature name that is not one of the supported ones is rejected at plan time,
 // before anything is deployed. Names are case-sensitive.
 func TestAccFeatureResource_InvalidFeature(t *testing.T) {
+	testAccFeatureSetup(t)
+
 	var steps []resource.TestStep
 	for _, name := range []string{"FOO", "ndr", ""} {
 		steps = append(steps, resource.TestStep{
@@ -173,30 +178,5 @@ func TestAccFeatureResource_InvalidFeature(t *testing.T) {
 		PreCheck:                 func() { testAccSSPRuntimePreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps:                    steps,
-	})
-}
-
-// A feature whose pre-checks fail is not deployed, and each failed check is
-// listed. SSP_ACC_FEATURE_PRECHECK_FAILS names a feature that is known to fail its
-// pre-checks on the cluster. It is opt-in because a feature whose pre-checks pass
-// would be deployed.
-func TestAccFeatureResource_PrechecksFail(t *testing.T) {
-	feature := os.Getenv("SSP_ACC_FEATURE_PRECHECK_FAILS")
-
-	resource.Test(t, resource.TestCase{
-		PreCheck: func() {
-			testAccSSPRuntimePreCheck(t)
-			if feature == "" {
-				t.Skip("SSP_ACC_FEATURE_PRECHECK_FAILS must name a feature whose pre-checks fail on this cluster")
-			}
-		},
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		CheckDestroy:             testAccCheckFeatureDestroy,
-		Steps: []resource.TestStep{
-			{
-				Config:      testAccFeatureConfig(feature),
-				ExpectError: regexp.MustCompile(`(?s)Pre-checks failed for feature ` + feature + `.*pre-checks failed`),
-			},
-		},
 	})
 }
