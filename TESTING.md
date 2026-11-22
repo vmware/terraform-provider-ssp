@@ -51,6 +51,29 @@ export SSP_PASSWORD="your-ssp-password"
 export SSP_INSECURE="true"
 ```
 
+#### Optional variables
+
+No acceptance test is ever skipped. A test that needs more than the platform **fails**, naming the missing
+variable, when it is not set, so set all of these for a full run.
+
+| Variable | Enables |
+| --- | --- |
+| `SSP_ACC_BACKUP_SERVER`, `_USERNAME`, `_PASSWORD`, `_PASSPHRASE`, `_LOCATION`, `_SSH_PUBLIC_KEY` (optional `_PORT`, `_ALT_LOCATION`) | `ssp_backup_config` (an SFTP server) |
+| `SSP_ACC_ALLOW_BACKUP` (default true) | `ssp_backup` takes real backups (they cannot be deleted afterwards) |
+| `SSP_ACC_ALLOW_RESTORE` (default true) | `ssp_restore` restores the whole platform |
+| `SSP_ACC_ALLOW_BAD_CREDENTIALS` (default true) | sends a wrong password (can lock the admin account for some minutes) |
+| `SSP_ACC_TEST_FEATURE` | `ssp_feature` deploy and undeploy (default `INTELLIGENCE`; `TF_ACC` defaults to `1` for these tests) |
+| `SSP_ACC_MALWARE_CLOUD_UNSUPPORTED` (default true) | CLOUD analysis mode is rejected (only on a deployment without cloud connectivity) |
+| `NSX_HOST`, `NSX_USERNAME`, `NSX_PASSWORD`, `NSX_CERTIFICATE`, `NSX_SITE_NAME` | `ssp_site` (an NSX Manager that is not onboarded yet) |
+| `SSP_ACC_ALLOW_SITE_ONBOARD` (default true) | sends onboarding requests for that NSX Manager |
+
+Most resources here are singletons: the tests change platform settings, leave them on the defaults noted
+in each test, and cannot delete them. Do not run the suite against a cluster whose settings matter. They
+also use plain `resource.Test`, not `ParallelTest`, so they run one at a time.
+
+Test helpers call the platform through the provider's own client (`internal/provider/client`), so they
+exercise the same transport, proxy and TLS handling as the provider.
+
 ### 2. Executing Acceptance Tests
 
 To enable acceptance testing, set `TF_ACC=1`:
@@ -58,6 +81,8 @@ To enable acceptance testing, set `TF_ACC=1`:
 ```shell
 make testacc
 ```
+
+`make testacc` allows 120 minutes (`-timeout 120m`); the full suite takes about 20 minutes.
 
 #### Running Specific Acceptance Tests
 
@@ -102,7 +127,9 @@ exists:
 2. Actions tab → "Acceptance Tests" → **Run workflow** → pick your branch.
 3. Fill in `ssp_host`/`ssp_username`/`ssp_password` in the form. If your change touches `ssp_site`,
    also fill in `nsx_host`/`nsx_username`/`nsx_password`/`nsx_certificate` — those tests need a
-   real NSX Manager and skip cleanly without them.
+   real NSX Manager and fail without them. The other optional variables above come from
+   repository secrets and variables of the same names (for example `SSP_ACC_BACKUP_SERVER`,
+   `SSP_ACC_ALLOW_BACKUP`).
 4. Check the run's summary and log; once it's green, open or update the PR.
 
 This gives you a logged, shareable CI run instead of just local terminal output, but you still have
@@ -110,18 +137,13 @@ to trigger it yourself each time — it isn't wired to fire automatically on pus
 
 ### What happens if nothing is configured
 
-Both options above **skip cleanly rather than failing** if the connection details aren't set.
-`testAccSSPRuntimePreCheck` and `testAccNSXSitePreCheck` (`internal/provider/provider_test.go`)
-call `t.Skip(...)` if `SSP_HOST`/`SSP_USERNAME`/`SSP_PASSWORD` (or, for `ssp_site` tests,
-`NSX_HOST`/`NSX_USERNAME`/`NSX_PASSWORD`/`NSX_CERTIFICATE`) are empty — every `TestAcc*` test
-reports `SKIP` with a message naming the missing variable, and the overall run still reports
-success (exit code 0). Separately, if `TF_ACC` itself isn't set, the `terraform-plugin-testing`
-framework skips every acceptance test before the PreCheck even runs, for the same reason.
+With `TF_ACC=1` the suite **fails** when `SSP_HOST`, `SSP_USERNAME` or `SSP_PASSWORD` is empty:
+`testAccSSPRuntimePreCheck` (`internal/provider/provider_test.go`) calls `t.Fatalf` naming the missing
+variable, so an unconfigured run can never look green. Tests that need the variables in the table above fail the same way, naming what is missing. If `TF_ACC` itself is
+not set, `terraform-plugin-testing` skips every acceptance test before the PreCheck runs.
 
-The one case that **does** fail rather than skip: `SSP_HOST` is set but wrong or unreachable —
-then the test gets past the `t.Skip()` checks and fails with a real connection/HTTP error. So a
-green "Acceptance Tests" run with all tests reported `SKIP` means "nothing was actually
-configured," not "the tests passed" — check the log, not just the overall pass/fail status.
+The `ssp_site` tests call `testAccNSXSitePreCheck`, which fails without the `NSX_*` variables, and the
+site tests also fail if that NSX Manager is already onboarded.
 
 ---
 

@@ -4,19 +4,15 @@
 package provider_test
 
 import (
-	"crypto/tls"
 	"fmt"
 	"net/http"
-	"os"
 	"regexp"
-	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/acctest"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
-	"golang.org/x/net/proxy"
 )
 
 func TestAccSensorRegistrationTokenResource(t *testing.T) {
@@ -66,45 +62,7 @@ resource "ssp_sensor_registration_token" "test" {
 // deleted from the SSP cluster (GET returns 404), rather than the resource's
 // Delete silently no-oping while the token remains usable server-side.
 func testAccCheckSensorRegistrationTokenDestroy(s *terraform.State) error {
-	host := os.Getenv("SSP_HOST")
-	username := os.Getenv("SSP_USERNAME")
-	password := os.Getenv("SSP_PASSWORD")
-
-	transport := &http.Transport{
-		Proxy:           http.ProxyFromEnvironment,
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-	}
-	if cd, ok := proxy.FromEnvironment().(proxy.ContextDialer); ok {
-		transport.DialContext = cd.DialContext
-	}
-	httpClient := &http.Client{
-		Transport: transport,
-	}
-
-	for _, rs := range s.RootModule().Resources {
-		if rs.Type != "ssp_sensor_registration_token" {
-			continue
-		}
-
-		url := strings.TrimRight(host, "/") + "/sensors/registration-tokens/" + rs.Primary.ID
-		req, err := http.NewRequest(http.MethodGet, url, nil) //nolint:gosec // host is the operator-configured SSP_HOST acceptance-test target, not user input
-		if err != nil {
-			return err
-		}
-		req.SetBasicAuth(username, password)
-
-		resp, err := httpClient.Do(req) //nolint:gosec // same operator-configured target as above
-		if err != nil {
-			return err
-		}
-		_ = resp.Body.Close()
-
-		if resp.StatusCode != http.StatusNotFound {
-			return fmt.Errorf("sensor registration token %s still exists (status %d)", rs.Primary.ID, resp.StatusCode)
-		}
-	}
-
-	return nil
+	return testAccCheckSSPResourceDestroyed(s, "ssp_sensor_registration_token", "/sensors/registration-tokens/")
 }
 
 const testAccSensorRegResourceAddr = "ssp_sensor_registration_token.test"

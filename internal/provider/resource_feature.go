@@ -267,8 +267,25 @@ func (r *FeatureResource) Read(ctx context.Context, req resource.ReadRequest, re
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
-// Update is a no-op: the only mutable attribute is `feature` which forces replacement.
-func (r *FeatureResource) Update(_ context.Context, _ resource.UpdateRequest, _ *resource.UpdateResponse) {
+// Update handles a change to force_undeploy, the only attribute that can change
+// without replacement. It has no server-side effect (it only picks the action
+// Delete uses), but the computed status attributes are unknown in the plan, so
+// they are refreshed from the platform rather than left unset.
+func (r *FeatureResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var data FeatureResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	var status client.FeatureDeploymentStatus
+	if _, err := r.client.Get(ctx, "/ssp/lcm/features/"+data.Feature.ValueString()+"/status", &status); err != nil {
+		resp.Diagnostics.AddError("Error reading feature status", err.Error())
+		return
+	}
+
+	mapFeatureStatusToState(&status, &data)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
 // Delete triggers UNDEPLOY and waits for the feature to reach NOT_DEPLOYED.

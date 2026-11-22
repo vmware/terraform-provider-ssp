@@ -4,6 +4,7 @@
 package provider_test
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
@@ -13,14 +14,13 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
+	"github.com/vmware/terraform-provider-ssp/internal/provider/client"
 )
 
 const testAccSiteName = "ssp_site.test"
 
-// testAccRequireNSXNotOnboarded skips the test when the NSX Manager is already
-// onboarded to the SSP: onboarding it a second time conflicts, and offboarding the
-// only site would disrupt the cluster. Offboard it first to run these tests.
-func testAccRequireNSXNotOnboarded(t *testing.T) {
+// testAccFindNSXSite returns the onboarded site that belongs to NSX_HOST, or nil.
+func testAccFindNSXSite(t *testing.T) map[string]any {
 	t.Helper()
 
 	host := os.Getenv("NSX_HOST")
@@ -34,9 +34,97 @@ func testAccRequireNSXNotOnboarded(t *testing.T) {
 			found = found || fmt.Sprint(ip) == host
 		}
 		if found {
-			t.Skipf("NSX Manager %s is already onboarded as site %v; offboard it to run this test", host, site["site_name"])
+			return site
 		}
 	}
+	return nil
+}
+
+// testAccOffboardSite offboards a site through the provider's client and waits
+// until the platform has removed it.
+func testAccOffboardSite(id string) error {
+	ctx := context.Background()
+	c := testAccClient()
+	path := "/ssp/sites/" + id + "?force=true"
+
+	var before client.Site
+	_, _ = c.Get(ctx, "/ssp/sites/"+id, &before)
+	since := client.LatestSitePrecheckTime(&before)
+
+	creds := &client.UserCredentials{Username: os.Getenv("NSX_USERNAME"), Password: os.Getenv("NSX_PASSWORD")}
+	status, err := c.DeleteWithBody(ctx, path, creds)
+	if status == http.StatusNotFound {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("offboard site %s: %w", id, err)
+	}
+	return c.WaitForSiteDeleted(ctx, id, since)
+}
+
+// testAccOnboardSite onboards the NSX Manager under name and waits until the
+// site is READY.
+func testAccOnboardSite(name string) error {
+	ctx := context.Background()
+	c := testAccClient()
+
+	payload := &client.Site{
+		SiteType:     "NSX_MANAGER",
+		SiteName:     name,
+		DesiredState: "ONBOARD",
+		SiteConnectionInfo: &client.SiteConnection{
+			ConnectionType: "DYNAMIC",
+			Hostname:       os.Getenv("NSX_HOST"),
+			Username:       os.Getenv("NSX_USERNAME"),
+			Password:       os.Getenv("NSX_PASSWORD"),
+			Certificate:    os.Getenv("NSX_CERTIFICATE"),
+		},
+	}
+	var resp client.AsyncApiResponse
+	if _, err := c.Post(ctx, "/ssp/sites?force=true", payload, &resp); err != nil {
+		return fmt.Errorf("onboard site %q: %w", name, err)
+	}
+	if resp.ID == "" {
+		return fmt.Errorf("onboard site %q: the API returned an empty id", name)
+	}
+	return c.WaitForSiteReady(ctx, resp.ID)
+}
+
+// testAccPrepareNSXSiteRoundTrip leaves the platform as it found it:
+//   - NSX Manager already onboarded: it is offboarded now so the test can
+//     onboard it, and onboarded again, under its original name, when the test
+//     ends (also when the test failed).
+//   - NSX Manager not onboarded: nothing to do here; the test onboards it and
+//     its destroy offboards it again.
+//
+// Offboarding is refused by the platform while features are still enabled on the
+// site; the test then fails before it changes anything else.
+func testAccPrepareNSXSiteRoundTrip(t *testing.T) {
+	t.Helper()
+
+	site := testAccFindNSXSite(t)
+	if site == nil {
+		return
+	}
+
+	id := fmt.Sprint(site["id"])
+	name := fmt.Sprint(site["site_name"])
+	t.Logf("NSX Manager %s is onboarded as site %q (%s); offboarding it for the test, it is onboarded again afterwards", os.Getenv("NSX_HOST"), name, id)
+
+	if err := testAccOffboardSite(id); err != nil {
+		t.Fatalf("cannot offboard the existing site: %s", err)
+	}
+
+	t.Cleanup(func() {
+		if testAccFindNSXSite(t) != nil {
+			return // the test left a site behind; do not onboard a second time
+		}
+		if err := testAccOnboardSite(name); err != nil {
+			t.Errorf("the site %q was offboarded for the test and could not be onboarded again: %s", name, err)
+			return
+		}
+		t.Logf("site %q onboarded again", name)
+	})
 }
 
 // testAccSiteConnection renders site_connection_info from the environment.
@@ -76,14 +164,18 @@ func testAccSiteDisplayName() string {
 // TestAccSiteResource onboards a real NSX Manager and checks that Create waits
 // until the site is READY, that the platform's own limits on updating a site are
 // reported, that an import round-trips, and (through CheckDestroy) that destroy
-// really offboards it. It needs the NSX_* variables (see testAccNSXSitePreCheck)
-// and an NSX Manager that is not onboarded yet. Destroy also needs every feature
-// to be removed first, or the platform refuses to offboard.
+// really offboards it. It needs the NSX_* variables (see testAccNSXSitePreCheck).
+//
+// It leaves the platform as it found it. If the NSX Manager is not onboarded, the
+// test onboards it and offboards it again. If it is already onboarded, the test
+// offboards it first, runs, and onboards it again under its original name.
+// Destroy also needs every feature to be removed first, or the platform refuses
+// to offboard.
 func TestAccSiteResource(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck: func() {
 			testAccNSXSitePreCheck(t)
-			testAccRequireNSXNotOnboarded(t)
+			testAccPrepareNSXSiteRoundTrip(t)
 		},
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		CheckDestroy:             testAccCheckSiteDestroy,
@@ -202,7 +294,7 @@ func TestAccSiteResource_InvalidCertificate(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck: func() {
 			testAccNSXSitePreCheck(t)
-			testAccRequireNSXNotOnboarded(t)
+			testAccPrepareNSXSiteRoundTrip(t)
 		},
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		CheckDestroy:             testAccCheckSiteDestroy,
@@ -225,7 +317,7 @@ func TestAccSiteResource_Prepare(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck: func() {
 			testAccNSXSitePreCheck(t)
-			testAccRequireNSXNotOnboarded(t)
+			testAccPrepareNSXSiteRoundTrip(t)
 		},
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		CheckDestroy:             testAccCheckSiteDestroy,
@@ -257,31 +349,17 @@ func testAccCheckSiteDestroy(s *terraform.State) error {
 // each resource of the given type by ID from the SSP runtime API and fails
 // if any still returns something other than 404.
 func testAccCheckSSPResourceDestroyed(s *terraform.State, resourceType, pathPrefix string) error {
-	host := os.Getenv("SSP_HOST")
-	username := os.Getenv("SSP_USERNAME")
-	password := os.Getenv("SSP_PASSWORD")
-
-	httpClient := testAccInsecureHTTPClient()
-
 	for _, rs := range s.RootModule().Resources {
 		if rs.Type != resourceType {
 			continue
 		}
 
-		req, err := http.NewRequest(http.MethodGet, testAccTrimHost(host)+pathPrefix+rs.Primary.ID, nil) //nolint:gosec // host is the operator-configured SSP_HOST acceptance-test target, not user input
+		status, _, err := testAccDoAPI(http.MethodGet, pathPrefix+rs.Primary.ID, nil)
 		if err != nil {
 			return err
 		}
-		req.SetBasicAuth(username, password)
-
-		resp, err := httpClient.Do(req) //nolint:gosec // same operator-configured target as above
-		if err != nil {
-			return err
-		}
-		_ = resp.Body.Close()
-
-		if resp.StatusCode != http.StatusNotFound {
-			return fmt.Errorf("%s %s still exists (status %d)", resourceType, rs.Primary.ID, resp.StatusCode)
+		if status != http.StatusNotFound {
+			return fmt.Errorf("%s %s still exists (status %d)", resourceType, rs.Primary.ID, status)
 		}
 	}
 

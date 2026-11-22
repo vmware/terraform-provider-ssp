@@ -58,11 +58,6 @@ on:
         description: 'NSX Manager certificate (optional, PEM)'
         required: false
         default: ''
-      allow_upgrade:
-        description: 'Allow the (mutating) upgrade acceptance test to run'
-        type: boolean
-        required: false
-        default: false
       test_feature:
         description: 'Feature name for the feature acceptance test (optional, SSP_ACC_TEST_FEATURE)'
         required: false
@@ -90,7 +85,7 @@ permissions:
 jobs:
   acceptance-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 130
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -132,14 +127,31 @@ jobs:
           NSX_USERNAME: ${{ inputs.nsx_username || secrets.NSX_USERNAME }}
           NSX_PASSWORD: ${{ inputs.nsx_password || secrets.NSX_PASSWORD }}
           NSX_CERTIFICATE: ${{ inputs.nsx_certificate || secrets.NSX_CERTIFICATE }}
-          SSP_ACC_ALLOW_UPGRADE: ${{ (github.event_name == 'workflow_dispatch' && inputs.allow_upgrade) || 'false' }}
           SSP_ACC_TEST_FEATURE: ${{ inputs.test_feature || vars.SSP_ACC_TEST_FEATURE }}
+          NSX_SITE_NAME: ${{ vars.NSX_SITE_NAME }}
+          # Optional extras. Tests that need one fail when it is empty; the opt-in
+          # switches (ALLOW_*) are repository variables so a run never takes real
+          # backups, restores the platform or onboards a site unless they are "true".
+          SSP_ACC_BACKUP_SERVER: ${{ secrets.SSP_ACC_BACKUP_SERVER }}
+          SSP_ACC_BACKUP_PORT: ${{ vars.SSP_ACC_BACKUP_PORT }}
+          SSP_ACC_BACKUP_USERNAME: ${{ secrets.SSP_ACC_BACKUP_USERNAME }}
+          SSP_ACC_BACKUP_PASSWORD: ${{ secrets.SSP_ACC_BACKUP_PASSWORD }}
+          SSP_ACC_BACKUP_PASSPHRASE: ${{ secrets.SSP_ACC_BACKUP_PASSPHRASE }}
+          SSP_ACC_BACKUP_LOCATION: ${{ vars.SSP_ACC_BACKUP_LOCATION }}
+          SSP_ACC_BACKUP_ALT_LOCATION: ${{ vars.SSP_ACC_BACKUP_ALT_LOCATION }}
+          SSP_ACC_BACKUP_SSH_PUBLIC_KEY: ${{ vars.SSP_ACC_BACKUP_SSH_PUBLIC_KEY }}
+          SSP_ACC_ALLOW_BACKUP: ${{ vars.SSP_ACC_ALLOW_BACKUP }}
+          SSP_ACC_ALLOW_RESTORE: ${{ vars.SSP_ACC_ALLOW_RESTORE }}
+          SSP_ACC_ALLOW_SITE_ONBOARD: ${{ vars.SSP_ACC_ALLOW_SITE_ONBOARD }}
+          SSP_ACC_ALLOW_BAD_CREDENTIALS: ${{ vars.SSP_ACC_ALLOW_BAD_CREDENTIALS }}
+          SSP_ACC_MALWARE_CLOUD_UNSUPPORTED: ${{ vars.SSP_ACC_MALWARE_CLOUD_UNSUPPORTED }}
+          SSP_ACC_FEATURE_PRECHECK_FAILS: ${{ vars.SSP_ACC_FEATURE_PRECHECK_FAILS }}
           ALL_PROXY: ${{ steps.testbed.outputs.jumphost_host != '' && 'socks5h://127.0.0.1:9999' || '' }}
           HTTPS_PROXY: ${{ steps.testbed.outputs.jumphost_host != '' && 'socks5h://127.0.0.1:9999' || '' }}
           NO_PROXY: '127.0.0.1,localhost,::1'
         run: |
           set -euo pipefail
-          go test ./... -v -count=1 -parallel=4 -timeout=45m ${{ inputs.testargs }} 2>&1 | tee acceptance-tests.log
+          go test ./... -v -count=1 -parallel=4 -timeout=120m ${{ inputs.testargs }} 2>&1 | tee acceptance-tests.log
           {
             echo "## Acceptance test run"
             echo ""
