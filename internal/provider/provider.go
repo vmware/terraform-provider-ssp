@@ -138,6 +138,7 @@ func (p *SspProvider) Resources(ctx context.Context) []func() resource.Resource 
 		NewRecurringBackupConfigResource,
 		NewBackupResource,
 		NewRestoreResource,
+		NewUpgradeCoordinatorConfigResource,
 		NewUpgradeResource,
 		NewSiteResource,
 		NewSensorRegistrationTokenResource,

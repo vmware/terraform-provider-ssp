@@ -594,3 +594,95 @@ func TestIsBackupNotFound(t *testing.T) {
 		t.Error("non-400/404 must not be not-found")
 	}
 }
+
+func preChecksBody(overall string, lastRun int64) UpgradeStatus {
+	return UpgradeStatus{
+		OverallStatus: "NOT_STARTED", // stays NOT_STARTED for a PRECHECKS_ONLY run
+		PreChecksStatus: &UpgradePreChecksStatus{
+			OverallStatus: overall,
+			PreChecks:     []UpgradePreCheck{{DisplayName: "Disk", Status: overall, LastRunTime: lastRun}},
+		},
+	}
+}
+
+// TestWaitForUpgradePrechecks_WaitsPastNotStarted reproduces the live failure:
+// while pre-checks run, the top-level overall_status is NOT_STARTED, which
+// WaitForUpgradeStatus treats as settled. WaitForUpgradePrechecks must keep
+// polling until pre_checks_status itself is terminal.
+func TestWaitForUpgradePrechecks_WaitsPastNotStarted(t *testing.T) {
+	withFastPolling(t, time.Second)
+
+	var calls int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /ssp/upgrade/status", func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&calls, 1)
+		body := preChecksBody("IN_PROGRESS", 0)
+		if n >= 3 {
+			body = preChecksBody("SUCCESS", 100)
+		}
+		_ = json.NewEncoder(w).Encode(body)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	status, err := newTestClient(srv.URL).WaitForUpgradePrechecks(context.Background(), 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if status.PreChecksStatus == nil || status.PreChecksStatus.OverallStatus != "SUCCESS" {
+		t.Fatalf("expected pre-checks SUCCESS, got %+v", status.PreChecksStatus)
+	}
+	if got := atomic.LoadInt32(&calls); got < 3 {
+		t.Fatalf("expected at least 3 polls, got %d", got)
+	}
+}
+
+// TestWaitForUpgradePrechecks_IgnoresPreviousRun verifies a terminal result left
+// over from an earlier pre-checks run is not mistaken for the run just started:
+// the stale SUCCESS has last_run_time == since, so polling continues until a
+// check runs again.
+func TestWaitForUpgradePrechecks_IgnoresPreviousRun(t *testing.T) {
+	withFastPolling(t, time.Second)
+
+	var calls int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /ssp/upgrade/status", func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&calls, 1)
+		body := preChecksBody("SUCCESS", 100) // previous run, unchanged
+		if n >= 3 {
+			body = preChecksBody("FAILED", 200) // the new run
+		}
+		_ = json.NewEncoder(w).Encode(body)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	status, err := newTestClient(srv.URL).WaitForUpgradePrechecks(context.Background(), 100)
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if status.PreChecksStatus.OverallStatus != "FAILED" {
+		t.Fatalf("expected the new run's FAILED, got the previous run's %s", status.PreChecksStatus.OverallStatus)
+	}
+	if got := atomic.LoadInt32(&calls); got < 3 {
+		t.Fatalf("expected at least 3 polls, got %d", got)
+	}
+}
+
+// TestWaitForUpgradePrechecks_Timeout verifies a pre-check run that never
+// finishes ends in an error rather than hanging.
+func TestWaitForUpgradePrechecks_Timeout(t *testing.T) {
+	withFastPolling(t, 100*time.Millisecond)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /ssp/upgrade/status", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(preChecksBody("IN_PROGRESS", 0))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	if _, err := newTestClient(srv.URL).WaitForUpgradePrechecks(context.Background(), 0); err == nil ||
+		!strings.Contains(err.Error(), "pre-checks") {
+		t.Fatalf("expected a pre-checks timeout error, got %v", err)
+	}
+}
