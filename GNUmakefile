@@ -41,7 +41,7 @@ errcheck:
 	@sh -c "'$(CURDIR)/scripts/errcheck.sh'"
 
 test-unit:
-	go test -v ./internal/... -tags=unittest -count=1
+	go test -v ./internal/... -tags=unittest -skip '^TestAcc' -count=1
 
 generate:
 	go generate ./...
