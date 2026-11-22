@@ -377,6 +377,38 @@ type UpgradeStatus struct {
 	TargetVersion  string            `json:"target_version,omitempty"`
 	UpgradeSteps   []UpgradeStepInfo `json:"upgrade_steps,omitempty"`
 	ErrorMessages  []string          `json:"error_messages,omitempty"`
+	// PreChecksStatus is only present once pre-checks have run. While a
+	// PRECHECKS_ONLY run is executing, the top-level OverallStatus stays
+	// NOT_STARTED and only this field reports progress.
+	PreChecksStatus *UpgradePreChecksStatus `json:"pre_checks_status,omitempty"`
+}
+
+// UpgradePreChecksStatus is SspUpgradeStatus.pre_checks_status.
+type UpgradePreChecksStatus struct {
+	OverallStatus string            `json:"overall_status,omitempty"`
+	PreChecks     []UpgradePreCheck `json:"pre_checks,omitempty"`
+}
+
+// UpgradePreCheck is one entry of pre_checks_status.pre_checks.
+type UpgradePreCheck struct {
+	DisplayName string `json:"display_name,omitempty"`
+	Status      string `json:"status,omitempty"`
+	LastRunTime int64  `json:"last_run_time,omitempty"`
+}
+
+// PreChecksLastRun returns the newest last_run_time across all pre-checks, or 0
+// if pre-checks have never run.
+func (s *UpgradeStatus) PreChecksLastRun() int64 {
+	if s.PreChecksStatus == nil {
+		return 0
+	}
+	var latest int64
+	for _, pc := range s.PreChecksStatus.PreChecks {
+		if pc.LastRunTime > latest {
+			latest = pc.LastRunTime
+		}
+	}
+	return latest
 }
 
 // UpgradeStepInfo is a single entry of SspUpgradeStatus.upgrade_steps.
@@ -487,6 +519,14 @@ type License struct {
 type NdrConfiguration struct {
 	Revision    int  `json:"_revision"`
 	DataSharing bool `json:"data_sharing"`
+}
+
+// UpgradeCoordinatorConfiguration is used for GET and PUT
+// /ssp/lcm/upgrade-coordinator/config. target_version must be set before the
+// UPGRADE_COORDINATOR feature can be deployed.
+type UpgradeCoordinatorConfiguration struct {
+	Revision      int    `json:"_revision"`
+	TargetVersion string `json:"target_version"`
 }
 
 // CloudConnectorConfiguration is used for GET and PUT
@@ -956,6 +996,60 @@ func (c *Client) WaitForUpgradeStatus(ctx context.Context) (*UpgradeStatus, erro
 				return nil, fmt.Errorf("timed out waiting for upgrade status to settle (last error: %w)", lastErr)
 			}
 			return &lastStatus, fmt.Errorf("timed out waiting for upgrade status to settle, last overall_status: %s", lastStatus.OverallStatus)
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(defaultPollInterval):
+		}
+	}
+}
+
+// WaitForUpgradePrechecks polls GET /ssp/upgrade/status until the pre-checks
+// triggered by POST /ssp/upgrade?action=PRECHECKS_ONLY reach a terminal state
+// (SUCCESS, SUCCESS_WITH_WARNINGS or FAILED) and returns that status. FAILED is
+// not an error here; the caller inspects PreChecksStatus.
+//
+// WaitForUpgradeStatus cannot be used for this: during a pre-checks-only run the
+// top-level overall_status stays NOT_STARTED, which it treats as settled, so it
+// returns immediately and a following CONTINUE is rejected with HTTP 409 while
+// pre-checks are still running.
+//
+// since is the newest pre-check last_run_time seen before the POST. A terminal
+// result is only accepted once the run has been observed IN_PROGRESS or a
+// pre-check has run after since, so the previous run's result is not mistaken
+// for this one.
+func (c *Client) WaitForUpgradePrechecks(ctx context.Context, since int64) (*UpgradeStatus, error) {
+	deadline := time.Now().Add(defaultPollTimeout)
+	var lastErr error
+	var lastStatus UpgradeStatus
+	sawInProgress := false
+	for {
+		var status UpgradeStatus
+		_, err := c.Get(ctx, "/ssp/upgrade/status", &status)
+		if err != nil {
+			lastErr = fmt.Errorf("error polling upgrade status: %w", err)
+		} else {
+			lastErr = nil
+			lastStatus = status
+			if pc := status.PreChecksStatus; pc != nil {
+				switch pc.OverallStatus {
+				case "IN_PROGRESS":
+					sawInProgress = true
+				case "SUCCESS", "SUCCESS_WITH_WARNINGS", "FAILED":
+					if sawInProgress || status.PreChecksLastRun() > since {
+						return &status, nil
+					}
+				}
+			}
+		}
+
+		if time.Now().After(deadline) {
+			if lastErr != nil {
+				return nil, fmt.Errorf("timed out waiting for upgrade pre-checks (last error: %w)", lastErr)
+			}
+			return &lastStatus, fmt.Errorf("timed out waiting for upgrade pre-checks to finish")
 		}
 
 		select {
